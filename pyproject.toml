@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0", "numpy"]
+build-backend = "setuptools.build_meta"
+
+# [tool.setuptools]
+# py-modules = ["src"]
+
+[project]
+name = "mosaics"
+version = "0.0.1a"
+authors = [
+    { name="Matthew Giammar", email="matthew_giammar@berkeley.edu" },
+]
+description = ""
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
