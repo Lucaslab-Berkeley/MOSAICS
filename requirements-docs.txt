@@ -1,0 +1,8 @@
+numpy
+scipy
+mrcfile
+matplotlib
+
+# Requirements for building the documentation page
+sphinx
+myst-parser
