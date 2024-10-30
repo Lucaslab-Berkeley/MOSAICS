@@ -76,6 +76,32 @@ class ContrastTransferFunction:
     B_factor: float  # in Angstroms^2
     pixel_size: float  # in Angstroms, assume square pixels
 
+    @classmethod
+    def from_ctffind5_output(
+        cls,
+        ctffind5_output: str,
+        voltage: float,
+        spherical_aberration: float,
+        amplitude_contrast_ratio: float,
+        pixel_size: float,
+        B_factor: float = 0.0,
+    ) -> "ContrastTransferFunction":
+        """Parse a CTFFIND5 fit output file and create a ContrastTransferFunction
+        object from the fit parameters.
+        """
+        fit_params = parse_single_ctffind5_result(ctffind5_output)
+
+        return cls(
+            voltage=voltage,
+            spherical_aberration=spherical_aberration,
+            defocus_1=fit_params["ctffind5.defocus_1"],
+            defocus_2=fit_params["ctffind5.defocus_2"],
+            astigmatism_azimuth=fit_params["ctffind5.astigmatism_azimuth"],
+            amplitude_contrast_ratio=amplitude_contrast_ratio,
+            B_factor=B_factor,
+            pixel_size=pixel_size,
+        )
+
     def __init__(
         self,
         voltage,
@@ -188,3 +214,31 @@ class ContrastTransferFunction:
 
         return ctf_arr
 
+    def to_json(self) -> dict:
+        """Convert the ContrastTransferFunction object to a JSON-serializable dictionary."""
+        return {
+            "voltage": self.voltage,
+            "spherical_aberration": self.spherical_aberration
+            * self.pixel_size
+            / 1e7,  # convert back to mm
+            "defocus_1": self.defocus_1,
+            "defocus_2": self.defocus_2,
+            "astigmatism_azimuth": self.astigmatism_azimuth,
+            "amplitude_contrast_ratio": self.amplitude_contrast_ratio,
+            "B_factor": self.B_factor,
+            "pixel_size": self.pixel_size,
+        }
+
+    @classmethod
+    def from_json(cls, json_dict: dict) -> "ContrastTransferFunction":
+        """Create a ContrastTransferFunction object from a JSON dictionary."""
+        return cls(
+            voltage=json_dict["voltage"],
+            spherical_aberration=json_dict["spherical_aberration"],
+            defocus_1=json_dict["defocus_1"],
+            defocus_2=json_dict["defocus_2"],
+            astigmatism_azimuth=json_dict["astigmatism_azimuth"],
+            amplitude_contrast_ratio=json_dict["amplitude_contrast_ratio"],
+            B_factor=json_dict["B_factor"],
+            pixel_size=json_dict["pixel_size"],
+        )

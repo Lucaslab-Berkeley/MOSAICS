@@ -1,5 +1,11 @@
+.DS_Store
+
+# Byte-compiled and package Pthon files
 *.egg-info
 __pycache__
+
+# Documentation Builds
+docs/_build
 
 data
 scratch_notebooks

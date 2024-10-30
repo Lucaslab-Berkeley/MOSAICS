@@ -4,6 +4,7 @@ from scipy.spatial.transform import Rotation
 from scipy.interpolate import RegularGridInterpolator
 
 from .utils import histogram_2d_gaussian_interpolation
+from .utils import calculate_scattering_potential_2d
 
 from abc import ABC, abstractmethod
 from typing import Tuple
@@ -38,50 +39,87 @@ class AbstractProjector(ABC):
 
 class DirectCoordinateProjector(AbstractProjector):
     """AbstractProjector implementation that takes in 3D atomic coordinates and projects
-    them in real-space (no Fourier slicing). Coordinates are in angstroms.
+    them in real-space (no Fourier slicing). Coordinates are provided in Angstroms and
+    can be automatically centered by mass. *NOTE: Current mass centering assumes equal
+    atomic weights; this will change in the future.* Atom-wise B-factors are used to
+    apply a Gaussian blur to the projections to account for fluctuations in the model.
+    These B-factors are in units Angstroms^2.
 
-    TODO: Explanation of how the FWHM of the scattered atomic potentials were determined
-    TODO: Allow user to specify FWHM of Gaussian potentials.
-
-    TODO: Finish docstring
+    Attributes:
+        atomic_coordinates (np.ndarray): The 3D atomic coordinates.
+        atomic_identities (np.ndarray): The atomic numbers of the atoms.
+        b_factors (np.ndarray): The B-factors of the atoms in Angstroms^2.
+        
+    Methods:
+        get_real_space_projection(phi: float, theta: float, psi: float) -> np.ndarray:
+            Project the atomic coordinates at a given orientation, defined by the Euler
+            angles in ZYZ convention.
 
     """
 
     atomic_coordinates: np.ndarray  # Angstroms
     atomic_identities: np.ndarray  # Atomic number
+    b_factors: np.ndarray  # Angstroms^2
 
     def __init__(
         self,
         pixel_size: float,
         projection_shape: Tuple[int, int],
         atomic_coordinates: np.ndarray,
+        b_factors: np.ndarray,  # In Angstroms^2
         atomic_identities: np.ndarray,
+        center_coords_by_mass: bool = False,
     ):
         super().__init__(pixel_size, projection_shape)
+        
+        # TODO: Implement validation checks for different inputs
+        # TODO: Implement b-factor scaling
 
+        if center_coords_by_mass:
+            atomic_coordinates -= np.average(atomic_coordinates, axis=0)
+        
         self.atomic_coordinates = atomic_coordinates
         self.atomic_identities = atomic_identities
+        self.b_factors = b_factors
 
     def get_real_space_projection(self, phi, theta, psi) -> np.ndarray:
         """Project the held atomic coordinates at a given orientation, defined by the Euler angles
         in ZYZ convention.
 
         TODO: finish docstring
-        """
+        # """
+        # # Transform held b-factors into variances for the Gaussian kernel
+        # sigma2 = self.b_factors / (8 * np.pi ** 2 * self.pixel_size ** 2)
+        # # sigma2 += self.pixel_size ** 2 / 12  # From top-hat on pixel size
+        # # sigma2 += 0.27 / self.pixel_size  # Inherent variance fit from PSF?
+        
         r = Rotation.from_euler("ZYZ", [phi, theta, psi], degrees=False)
 
         # Rotate the atomic coordinates, then project onto 2D xy plane
         rotated_coordinates = r.inv().apply(self.atomic_coordinates)
         projected_coordinates = rotated_coordinates[:, :2]
 
-        # Transform coordinates from Angstroms with origin at center to pixels
-        projected_coordinates = projected_coordinates / self.pixel_size
-        projected_coordinates += np.array(self.projection_shape) / 2
+        # Generate bins (in Angstroms) for the histogram centered at (0, 0)
+        # NOTE: This might need some tweaking to perfectly match the Fourier slice
+        bins0 = np.arange(self.projection_shape[1]) * self.pixel_size
+        bins1 = np.arange(self.projection_shape[0]) * self.pixel_size
+        bins0 = bins0 - bins0[-1] / 2
+        bins1 = bins1 - bins1[-1] / 2
 
-        projection = histogram_2d_gaussian_interpolation(
-            projected_coordinates,
-            sigma=0.8,
-            shape=self.projection_shape,
+        # projection = histogram_2d_gaussian_interpolation(
+        #     x=projected_coordinates[:, 0],
+        #     y=projected_coordinates[:, 1],
+        #     sigma=np.sqrt(sigma2),  # NOTE: Need to also account for pixel size
+        #     bins=(bins0, bins1),
+        #     alpha=0.01,
+        # )
+        
+        projection = calculate_scattering_potential_2d(
+            x=projected_coordinates[:, 0],
+            y=projected_coordinates[:, 1],
+            atom_ids=self.atomic_identities,
+            b_factors=self.b_factors,
+            bins=(bins0, bins1),
             alpha=0.01,
         )
 
@@ -114,10 +152,8 @@ class FourierSliceProjector(AbstractProjector):
 
     potential_array: np.ndarray
     potential_array_fft: np.ndarray
-    pixel_size: float  # In Angstroms, assume cubic pixels
 
     _interpolator: RegularGridInterpolator
-    _slice_shape: Tuple[int, int]
 
     @classmethod
     def from_mrc(cls, mrc_path: str):

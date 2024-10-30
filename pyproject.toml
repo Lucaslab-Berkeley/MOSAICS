@@ -5,6 +5,9 @@ build-backend = "setuptools.build_meta"
 # [tool.setuptools]
 # py-modules = ["src"]
 
+[tool.esbonio.sphinx]
+buildCommand = "sphinx-build -b html docs docs/_build"
+
 [project]
 name = "mosaics"
 version = "0.0.1a"
