@@ -4,10 +4,10 @@ import mrcfile
 from typing import Tuple
 from typing import Literal
 
-from .particle_stack import ParticleStack
-from .filters.bandpass_filter import get_bandpass_filter
-from .filters.whitening_filter import get_whitening_filter
-
+from mosaics.data_structures.particle_stack import ParticleStack
+from mosaics.data_structures.contrast_transfer_function import ContrastTransferFunction
+from mosaics.filters.bandpass_filter import get_bandpass_filter
+from mosaics.filters.whitening_filter import get_whitening_filter
 
 class Micrograph:
     """Class for handling micrograph data and common operations.
@@ -22,7 +22,7 @@ class Micrograph:
     pixel_size: float  # In Angstroms, assume square pixels
     image_path: str
 
-    ctf: ContrastTransferFunction = None
+    ctf: "ContrastTransferFunction" = None
 
     # image_array_fft: np.ndarray
     # whitening_filter: np.ndarray = None  # for holding pre-computation
@@ -159,7 +159,7 @@ class Micrograph:
         particle_z_scores: np.ndarray = None,
         particle_mip_values: np.ndarray = None,
         position_reference: Literal["center", "corner"] = "center",
-    ) -> ParticleStack:
+    ) -> "ParticleStack":
         """Extract particles from the micrograph using the provided particle positions
         and other optional information about each particle.
 

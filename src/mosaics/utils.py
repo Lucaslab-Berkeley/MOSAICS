@@ -1,15 +1,15 @@
 import numpy as np
 from scipy.special import erf
+from pathlib import Path
 
 from typing import Tuple, Union
 
-import matplotlib.pyplot as plt
-
 import json
 
-# TODO: Clean up how this JSON data is loaded into the module
 # Taken from Table 4.3.2.2. of International Tables for Crystallography Vol. C Third edition (2004)
-with open("elastic_scattering_factors.json", "r") as f:
+SCATTERING_PARAMS_PATH = Path(__file__).parent / "elastic_scattering_factors.json"
+
+with open(SCATTERING_PARAMS_PATH, "r") as f:
     data = json.load(f)
 
 SCATTERING_PARAMETERS_A = {k: v for k, v in data["parameters_a"].items() if v != []}

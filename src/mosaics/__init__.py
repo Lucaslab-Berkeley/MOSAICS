@@ -1,7 +1,7 @@
 import numpy as np
-from .micrograph import Micrograph
-from .particle_stack import ParticleStack
-from .filters.contrast_transfer_function import ContrastTransferFunction
+from mosaics.data_structures.micrograph import Micrograph
+from mosaics.data_structures.particle_stack import ParticleStack
+from mosaics.data_structures.contrast_transfer_function import ContrastTransferFunction
 
 
 class MosaicsManager:

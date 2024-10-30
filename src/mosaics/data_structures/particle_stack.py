@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Tuple
 
-from refine_template_result import RefineTemplateResult
+from mosaics.data_structures.refine_template_result import RefineTemplateResult
 
 
 class ParticleStack:

@@ -9,8 +9,8 @@ class RefineTemplateResult:
     TODO: complete docstring
     """
     
-    reference_template: ReferenceTemplate
-    micrograph: Micrograph
+    reference_template: "ReferenceTemplate"
+    micrograph: "Micrograph"
     
     num_particles: int
     z_score_threshold: float  # TODO: Auto-determine from tm results
@@ -36,8 +36,8 @@ class RefineTemplateResult:
     @classmethod
     def from_refine_template_output_files(
         cls,
-        reference_template: ReferenceTemplate,
-        micrograph: Micrograph,
+        reference_template: "ReferenceTemplate",
+        micrograph: "Micrograph",
         z_score_threshold: float,
         refined_mip_path: str,
         refined_mip_scaled_path: str,
@@ -82,8 +82,8 @@ class RefineTemplateResult:
         
     def __init__(
         self,
-        reference_template: ReferenceTemplate,
-        micrograph: Micrograph,
+        reference_template: "ReferenceTemplate",
+        micrograph: "Micrograph",
         z_score_threshold: float,
         num_particles: int,
         particle_locations: np.ndarray,
