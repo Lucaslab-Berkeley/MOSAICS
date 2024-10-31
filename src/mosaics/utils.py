@@ -1,8 +1,9 @@
 import numpy as np
+import pandas as pd
 from scipy.special import erf
 from pathlib import Path
 
-from typing import Tuple, Union
+from typing import Tuple, Union, Literal
 
 import json
 
@@ -303,3 +304,78 @@ def calculate_scattering_potential_2d(
         )
 
     return histogram
+
+def get_cropped_region_of_image(
+    image: np.ndarray,
+    box_size: Tuple[int, int],
+    positions_x: int,
+    positions_y: int,
+    positions_reference: Literal["center", "corner"] = "center",
+    handle_bounds: Literal["crop", "fill", "error"] = "error",
+) -> np.ndarray:
+    """Crop the region with given box size and position out of an image. Handles
+    position references and bounds checking.
+    
+    TODO: Finish docstring
+    """
+    # Handle the position reference
+    if positions_reference == "center":
+        positions_x = int(positions_x - box_size[1] / 2)
+        positions_y = int(positions_y - box_size[0] / 2)
+
+    x_bounds = [positions_x, positions_x + box_size[1]]
+    y_bounds = [positions_y, positions_y + box_size[0]]
+    
+    # Handle the bounds checking
+    _bounds_flag = False
+    if (
+        x_bounds[0] < 0 or x_bounds[1] > image.shape[1] or
+        y_bounds[0] < 0 or y_bounds[1] > image.shape[0]
+    ):
+        if handle_bounds == "error":
+            raise ValueError("Selected region is out of bounds for the image.")
+        
+        _bounds_flag = True
+        x_clips = [
+            max(-x_bounds[0], 0),
+            max(x_bounds[1] - image.shape[1], 0),
+        ]
+        y_clips = [
+            max(-y_bounds[0], 0),
+            max(y_bounds[1] - image.shape[0], 0),
+        ]
+        
+        x_bounds = [max(x_bounds[0], 0), min(x_bounds[1], image.shape[1])]
+        y_bounds = [max(y_bounds[0], 0), min(y_bounds[1], image.shape[0])]
+                
+    tmp_image = image[y_bounds[0]:y_bounds[1], x_bounds[0]:x_bounds[1]]
+
+    if _bounds_flag and handle_bounds == "fill":
+        tmp_image = np.pad(
+            tmp_image,
+            ((y_clips[0], y_clips[1]), (x_clips[0], x_clips[1])),
+            mode="constant",
+            constant_values=np.mean(tmp_image),  # TODO: Options for fill?
+        )
+
+    return tmp_image
+
+def parse_out_coordinates_result(filename) -> pd.DataFrame:
+    """Parse the columns of the make_template_result out_coordinates.txt file and place
+    all the columns into a pandas DataFrame. First row defines the column names,
+    separated by whitespace, with the subsequent rows in the file being the data.
+
+    Arguments:
+        (str) filename: The path to the out_coordinates.txt file to parse
+
+    Returns:
+        (pd.DataFrame) df: The DataFrame containing the parsed data
+    """
+    # Get the column names from the first comment line
+    with open(filename, "r") as f:
+        first_line = f.readline()
+    column_names = first_line.strip().split()[1:]  # First character is a comment
+
+    coord_df = pd.read_csv(filename, sep=r"\s+", skiprows=1, names=column_names)
+
+    return coord_df

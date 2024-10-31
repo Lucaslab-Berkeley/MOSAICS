@@ -1,4 +1,5 @@
 import numpy as np
+import mrcfile
 import json
 
 
@@ -14,7 +15,7 @@ class RefineTemplateResult:
     
     num_particles: int
     z_score_threshold: float  # TODO: Auto-determine from tm results
-    particle_locations: np.ndarray  # In pixel coordinates
+    particle_positions: np.ndarray  # In pixel coordinates
     
     # NOTE: These are 1D arrays where the output for cisTEM refine_template program is
     # 2D arrays of same shape of image.
@@ -46,26 +47,40 @@ class RefineTemplateResult:
         refined_phi_path: str,
         refined_defocus_path: str,
     ):
+        """Create a RefineTemplateResult object from the output files of the cisTEM
+        refine_template program.
+        
+        TODO: complete docstring
+        """
+        # Open the MRC files and ignore last dimension if 3d
+        refined_mip_2d = mrcfile.open(refined_mip_path).data.copy().squeeze()
+        refined_phi = mrcfile.open(refined_phi_path).data.copy().squeeze()
+        refined_theta = mrcfile.open(refined_theta_path).data.copy().squeeze()
+        refined_psi = mrcfile.open(refined_psi_path).data.copy().squeeze()
+        refined_defocus = mrcfile.open(refined_defocus_path).data.copy().squeeze()
+        refined_mip_scaled = mrcfile.open(refined_mip_scaled_path).data.copy().squeeze()
+        
         # Find where the mip is non-zero for locating each particle.
-        refined_mip_2d = np.load(refined_mip_path)
-        particle_locations = np.where(refined_mip_2d != 0)
-        num_particles = particle_locations[0].size
+        particle_positions = np.where(refined_mip_2d != 0)
+        num_particles = particle_positions[0].size
         
-        # Load in in the 2D arrays and grab values at particle locations
-        refined_mip = refined_mip_2d[particle_locations]
-        refined_mip_scaled = np.load(refined_mip_scaled_path)[particle_locations]
+        # Index the 2D arrays into 1D arrays at the particle locations
+        refined_mip = refined_mip_2d[particle_positions]
+        refined_phi = refined_phi[particle_positions]
+        refined_theta = refined_theta[particle_positions]
+        refined_psi = refined_psi[particle_positions]
+        refined_defocus = refined_defocus[particle_positions]
+        refined_mip_scaled = refined_mip_scaled[particle_positions]
         
-        refined_phi = np.load(refined_phi_path)[particle_locations]
-        refined_theta = np.load(refined_theta_path)[particle_locations]
-        refined_psi = np.load(refined_psi_path)[particle_locations]
-        refined_defocus = np.load(refined_defocus_path)[particle_locations]
+        # Cast particle locations into array
+        particle_positions = np.stack([particle_positions[0], particle_positions[1]], axis=-1)
         
         return cls(
             reference_template=reference_template,
             micrograph=micrograph,
             z_score_threshold=z_score_threshold,
             num_particles=num_particles,
-            particle_locations=particle_locations,  # TODO: check array shape/orientation
+            particle_positions=particle_positions,  # TODO: check array shape/orientation
             refined_mip=refined_mip,
             refined_mip_scaled=refined_mip_scaled,
             refined_phi=refined_phi,
@@ -86,7 +101,7 @@ class RefineTemplateResult:
         micrograph: "Micrograph",
         z_score_threshold: float,
         num_particles: int,
-        particle_locations: np.ndarray,
+        particle_positions: np.ndarray,
         refined_mip: np.ndarray,
         refined_mip_scaled: np.ndarray,
         refined_phi: np.ndarray,
@@ -105,7 +120,7 @@ class RefineTemplateResult:
         
         self.z_score_threshold = z_score_threshold
         self.num_particles = num_particles
-        self.particle_locations = particle_locations
+        self.particle_positions = particle_positions
         
         self.refined_mip = refined_mip
         self.refined_mip_scaled = refined_mip_scaled
@@ -147,22 +162,22 @@ class RefineTemplateResult:
         
         # Load arrays from paths
         refined_mip_2d = np.load(json_dict["refined_mip_path"])
-        particle_locations = np.where(refined_mip_2d != 0)
-        num_particles = particle_locations[0].size
+        particle_positions = np.where(refined_mip_2d != 0)
+        num_particles = particle_positions[0].size
         
-        refined_mip = refined_mip_2d[particle_locations]
-        refined_mip_scaled = np.load(json_dict["refined_mip_scaled_path"])[particle_locations]
-        refined_phi = np.load(json_dict["refined_phi_path"])[particle_locations]
-        refined_theta = np.load(json_dict["refined_theta_path"])[particle_locations]
-        refined_psi = np.load(json_dict["refined_psi_path"])[particle_locations]
-        refined_defocus = np.load(json_dict["refined_defocus_path"])[particle_locations]
+        refined_mip = refined_mip_2d[particle_positions]
+        refined_mip_scaled = np.load(json_dict["refined_mip_scaled_path"])[particle_positions]
+        refined_phi = np.load(json_dict["refined_phi_path"])[particle_positions]
+        refined_theta = np.load(json_dict["refined_theta_path"])[particle_positions]
+        refined_psi = np.load(json_dict["refined_psi_path"])[particle_positions]
+        refined_defocus = np.load(json_dict["refined_defocus_path"])[particle_positions]
 
         return cls(
             reference_template=reference_template,
             micrograph=micrograph,
             z_score_threshold=json_dict["z_score_threshold"],
             num_particles=num_particles,
-            particle_locations=particle_locations,
+            particle_positions=particle_positions,
             refined_mip=refined_mip,
             refined_mip_scaled=refined_mip_scaled,
             refined_phi=refined_phi,
