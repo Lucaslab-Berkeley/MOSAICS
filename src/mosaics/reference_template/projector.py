@@ -3,8 +3,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from scipy.interpolate import RegularGridInterpolator
 
-from .utils import histogram_2d_gaussian_interpolation
-from .utils import calculate_scattering_potential_2d
+from mosaics.reference_template.simulator import calculate_scattering_potential_2d
 
 from abc import ABC, abstractmethod
 from typing import Tuple
@@ -17,6 +16,7 @@ class AbstractProjector(ABC):
     implementations can take in templates in different formats (e.g. 3D electron
     scattering potentials or 3D atomic coordinates)
 
+    TODO: Finish docstring
 
     """
 
@@ -101,8 +101,8 @@ class DirectCoordinateProjector(AbstractProjector):
 
         # Generate bins (in Angstroms) for the histogram centered at (0, 0)
         # NOTE: This might need some tweaking to perfectly match the Fourier slice
-        bins0 = np.arange(self.projection_shape[1]) * self.pixel_size
-        bins1 = np.arange(self.projection_shape[0]) * self.pixel_size
+        bins0 = (np.arange(self.projection_shape[1]) + 0.5) * self.pixel_size
+        bins1 = (np.arange(self.projection_shape[0]) + 0.5) * self.pixel_size
         bins0 = bins0 - bins0[-1] / 2
         bins1 = bins1 - bins1[-1] / 2
 
