@@ -1,8 +1,8 @@
+from pathlib import Path
+from typing import Literal, Tuple, Union
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
-
-from typing import Tuple, Union, Literal
 
 
 def _calculate_pixel_radial_distance(shape: Tuple[int, int]) -> np.ndarray:
@@ -196,7 +196,7 @@ def get_cropped_region_of_image(
 ) -> np.ndarray:
     """Crop the region with given box size and position out of an image. Handles
     position references and bounds checking.
-    
+
     TODO: Finish docstring
     """
     # Handle the position reference
@@ -206,16 +206,18 @@ def get_cropped_region_of_image(
 
     x_bounds = [positions_x, positions_x + box_size[1]]
     y_bounds = [positions_y, positions_y + box_size[0]]
-    
+
     # Handle the bounds checking
     _bounds_flag = False
     if (
-        x_bounds[0] < 0 or x_bounds[1] > image.shape[1] or
-        y_bounds[0] < 0 or y_bounds[1] > image.shape[0]
+        x_bounds[0] < 0
+        or x_bounds[1] > image.shape[1]
+        or y_bounds[0] < 0
+        or y_bounds[1] > image.shape[0]
     ):
         if handle_bounds == "error":
             raise ValueError("Selected region is out of bounds for the image.")
-        
+
         _bounds_flag = True
         x_clips = [
             max(-x_bounds[0], 0),
@@ -225,11 +227,11 @@ def get_cropped_region_of_image(
             max(-y_bounds[0], 0),
             max(y_bounds[1] - image.shape[0], 0),
         ]
-        
+
         x_bounds = [max(x_bounds[0], 0), min(x_bounds[1], image.shape[1])]
         y_bounds = [max(y_bounds[0], 0), min(y_bounds[1], image.shape[0])]
-                
-    tmp_image = image[y_bounds[0]:y_bounds[1], x_bounds[0]:x_bounds[1]]
+
+    tmp_image = image[y_bounds[0] : y_bounds[1], x_bounds[0] : x_bounds[1]]
 
     if _bounds_flag and handle_bounds == "fill":
         tmp_image = np.pad(
@@ -240,6 +242,7 @@ def get_cropped_region_of_image(
         )
 
     return tmp_image
+
 
 def parse_out_coordinates_result(filename) -> pd.DataFrame:
     """Parse the columns of the make_template_result out_coordinates.txt file and place

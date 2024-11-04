@@ -1,12 +1,13 @@
-import mrcfile
-import numpy as np
-from scipy.spatial.transform import Rotation
-from scipy.interpolate import RegularGridInterpolator
-
-from mosaics.reference_template.simulator import calculate_scattering_potential_2d
-
 from abc import ABC, abstractmethod
 from typing import Tuple
+
+import mrcfile
+import numpy as np
+from scipy.interpolate import RegularGridInterpolator
+from scipy.spatial.transform import Rotation
+
+from mosaics.reference_template.simulator import \
+    calculate_scattering_potential_2d
 
 
 class AbstractProjector(ABC):
@@ -49,7 +50,7 @@ class DirectCoordinateProjector(AbstractProjector):
         atomic_coordinates (np.ndarray): The 3D atomic coordinates.
         atomic_identities (np.ndarray): The atomic numbers of the atoms.
         b_factors (np.ndarray): The B-factors of the atoms in Angstroms^2.
-        
+
     Methods:
         get_real_space_projection(phi: float, theta: float, psi: float) -> np.ndarray:
             Project the atomic coordinates at a given orientation, defined by the Euler
@@ -71,12 +72,12 @@ class DirectCoordinateProjector(AbstractProjector):
         center_coords_by_mass: bool = False,
     ):
         super().__init__(pixel_size, projection_shape)
-        
+
         # TODO: Implement validation checks for different inputs
 
         if center_coords_by_mass:
             atomic_coordinates -= np.average(atomic_coordinates, axis=0)
-        
+
         self.atomic_coordinates = atomic_coordinates
         self.atomic_identities = atomic_identities
         self.b_factors = b_factors
@@ -86,8 +87,8 @@ class DirectCoordinateProjector(AbstractProjector):
         in ZYZ convention.
 
         TODO: finish docstring
-        # """
-        
+        #"""
+
         r = Rotation.from_euler("ZYZ", [phi, theta, psi], degrees=False)
 
         # Rotate the atomic coordinates, then project onto 2D xy plane
@@ -100,7 +101,7 @@ class DirectCoordinateProjector(AbstractProjector):
         bins1 = (np.arange(self.projection_shape[0]) + 0.5) * self.pixel_size
         bins0 = bins0 - bins0[-1] / 2
         bins1 = bins1 - bins1[-1] / 2
-        
+
         projection = calculate_scattering_potential_2d(
             x=projected_coordinates[:, 0],
             y=projected_coordinates[:, 1],

@@ -1,11 +1,11 @@
-import numpy as np
-
 from typing import Literal
+
+import numpy as np
 
 
 def cross_correlate_same_shape(image: np.ndarray, template: np.ndarray) -> float:
-    """Cross-correlated an image and template (both provided in Fourier space) which
-    have the same shape. The result will be a single scalar value.
+    """Cross-correlated an image and template (both provided in Fourier space)
+    which have the same shape. The result will be a single scalar value.
 
     Args:
         image (np.ndarray): The FFT of the image.
@@ -19,15 +19,16 @@ def cross_correlate_from_fft(
     template_fft: np.ndarray,
     mode: Literal["valid", "full"] = "valid",
 ) -> np.ndarray:
-    """Cross-correlates an image and template (both provided in Fourier space) with the
-    provided mode. If mode is 'valid', then the result is cropped to be the valid bounds
-    of cross-correlation. If mode is 'full', then the result is not cropped.
+    """Cross-correlates an image and template (both provided in Fourier space)
+    with the provided mode. If mode is 'valid', then the result is cropped to
+    be the valid bounds of cross-correlation. If mode is 'full', then the
+    result is not cropped.
 
     Args:
         image_fft (np.ndarray): The FFT and shifted image.
         template_fft (np.ndarray): The FFT and shifted template.
-        mode (Literal["valid", "full"]): The mode of the cross-correlation. Default is
-            'valid'.
+        mode (Literal["valid", "full"]): The mode of the cross-correlation.
+        Default is 'valid'.
 
     Returns:
         np.ndarray: The cross-correlation result.
@@ -37,7 +38,7 @@ def cross_correlate_from_fft(
     # FFT pad up to the same shape as the reference image
     template = np.fft.ifftshift(template_fft)
     template = np.fft.ifftn(template)
-    template = np.fft.ifftshift(template)  # Fourier slicing is shifted in real space
+    template = np.fft.ifftshift(template)  # slicing is shifted in real space
     template_fft = np.fft.fftn(template, s=image_fft.shape)
     template_fft = np.fft.fftshift(template_fft)
 
@@ -57,16 +58,18 @@ def cross_correlate_from_fft(
 
 
 def cross_correlate(
-    image: np.ndarray, template: np.ndarray, mode: Literal["valid", "full"] = "valid"
+    image: np.ndarray,
+    template: np.ndarray,
+    mode: Literal["valid", "full"] = "valid",
 ) -> np.ndarray:
-    """Cross-correlates an image and template which are provided in real space. The
-    result is the cross-correlation of the two images.
+    """Cross-correlates an image and template which are provided in real space.
+    The result is the cross-correlation of the two images.
 
     Args:
         image (np.ndarray): The image.
         template (np.ndarray): The template.
-        mode (Literal["valid", "full"]): The mode of the cross-correlation. Default is
-            'valid'.
+        mode (Literal["valid", "full"]): The mode of the cross-correlation.
+            Default is 'valid'.
 
     Returns:
         np.ndarray: The cross-correlation result.

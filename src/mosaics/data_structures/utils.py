@@ -1,20 +1,21 @@
 def parse_single_ctffind5_result(result_file_path: str) -> dict:
-    """Parses a single ctffind5 result file into a dictionary assuming ordering of
-    the fields is consistent. The names of the actual fields are in above comments.
-    
+    """Parses a single ctffind5 result file into a dictionary assuming ordering
+    of the fields is consistent. The names of the actual fields are in above
+    comments.
+
     Arguments:
         (str) result_file_path: Path to the ctffind5 result file.
-        
+
     Returns:
         (dict) Dictionary of parsed fields.
     """
     with open(result_file_path, "r") as f:
         lines = f.readlines()
         result = lines[-1]
-        
+
     result = result.split()  # Split along spaces
     result = [float(x) for x in result]
-    
+
     return {
         "ctffind5.micrograph_number": result[0],
         "ctffind5.defocus_1": result[1],

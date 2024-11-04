@@ -1,10 +1,10 @@
+from typing import Tuple
+
 import numpy as np
 import scipy as sp
 
-from mosaics.utils import _calculate_pixel_radial_distance
-from mosaics.utils import _calculate_pixel_spatial_frequency
-
-from typing import Tuple
+from mosaics.utils import (_calculate_pixel_radial_distance,
+                           _calculate_pixel_spatial_frequency)
 
 
 def _calculate_num_psd_bins(shape: Tuple[int, int]) -> int:
@@ -144,9 +144,9 @@ def compute_power_spectral_density_2D(
         bounds_error=True,
         fill_value=1e-10,
     )
-    
+
     psd_image = psd_image.reshape(image.shape)
-    
+
     return psd_image
 
 
@@ -157,9 +157,9 @@ def get_whitening_filter(
     power_spectrum_2D = compute_power_spectral_density_2D(
         image=image, pixel_size=pixel_size, is_fourier_space=is_fourier_space, **kwargs
     )
-    
+
     # whitening_filter = 1 / np.sqrt(power_spectrum_2D)
     whitening_filter = 1 / power_spectrum_2D
     whitening_filter /= whitening_filter.max()
-    
+
     return whitening_filter

@@ -1,9 +1,8 @@
-import numpy as np
-from pathlib import Path
-
-from typing import Tuple, Union, Literal
-
 import json
+from pathlib import Path
+from typing import Tuple
+
+import numpy as np
 
 # Taken from Table 4.3.2.2. of International Tables for Crystallography Vol. C Third edition (2004)
 SCATTERING_PARAMS_PATH = Path(__file__).parent / "elastic_scattering_factors.json"
@@ -30,9 +29,6 @@ def _scattering_potential_single_atom_3d(
 
     """
     x, y, z = pos
-    dx = x[1] - x[0]
-    dy = y[1] - y[0]
-    dz = z[1] - z[0]
 
     amp = np.zeros((x.shape))
 
@@ -68,8 +64,6 @@ def _scattering_potential_single_atom_2d(
     TODO: Finish docstring
     """
     x, y = pos
-    dx = x[1] - x[0]
-    dy = y[1] - y[0]
 
     amp = np.zeros((x.shape))
 

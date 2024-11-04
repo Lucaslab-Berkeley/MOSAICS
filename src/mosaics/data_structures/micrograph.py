@@ -1,11 +1,13 @@
-import numpy as np
-import mrcfile
-from typing import Tuple
-from typing import Literal
+from typing import Literal, Tuple
 
+import mrcfile
+import numpy as np
+
+from mosaics.data_structures.contrast_transfer_function import \
+    ContrastTransferFunction
 from mosaics.data_structures.particle_stack import ParticleStack
-from mosaics.data_structures.contrast_transfer_function import ContrastTransferFunction
 from mosaics.utils import get_cropped_region_of_image
+
 
 class Micrograph:
     """Class for handling micrograph data and common operations.
@@ -28,9 +30,9 @@ class Micrograph:
         with mrcfile.open(mrc_path) as mrc:
             image_array = mrc.data.squeeze().copy()
             pixel_size = mrc.voxel_size.x
-            
+
         return cls(image_array, pixel_size, mrc_path)
-        
+
     def to_json(self) -> dict:
         """Convert the Micrograph object to a JSON-serializable dictionary."""
         return {
@@ -45,20 +47,23 @@ class Micrograph:
         # Load the image from the stored path
         with mrcfile.open(json_dict["image_path"]) as mrc:
             image_array = mrc.data.copy()
-        
+
         micrograph = cls(
             image_array=image_array,
             pixel_size=json_dict["pixel_size"],
-            image_path=json_dict["image_path"]
+            image_path=json_dict["image_path"],
         )
-        
+
         if json_dict["ctf"] is not None:
             micrograph.ctf = ContrastTransferFunction.from_json(json_dict["ctf"])
-        
+
         return micrograph
 
     def __init__(
-        self, image_array: np.ndarray, pixel_size: float, image_path: str = None
+        self,
+        image_array: np.ndarray,
+        pixel_size: float,
+        image_path: str = None,
     ):
         self.image_array = image_array
         self.pixel_size = pixel_size
@@ -75,20 +80,21 @@ class Micrograph:
     ) -> None:
         """Helper function to validate inputs for particle extraction.
 
-        Checks that the number of particles is consistent across all provided arrays and
-        that the shapes of the arrays match what is expected.
+        Checks that the number of particles is consistent across all provided
+        arrays and that the shapes of the arrays match what is expected.
 
         Args:
             particle_positions: Array of particle positions, shape (N,2)
             particle_orientations: Optional array of orientations, shape (N,3)
-            particle_defocus_parameters: Optional array of CTF params, shape (N,3)
+            particle_defocus_parameters: Optional array of CTF params, shape
+                (N,3)
             particle_z_scores: Optional array of z-scores, shape (N,)
             particle_mip_values: Optional array of MIP values, shape (N,)
         """
         assert (
             positions_x.shape == positions_y.shape
         ), "Positions x and y must have the same shape."
-        
+
         # Same length validation
         if particle_orientations is not None:
             assert (
@@ -141,8 +147,8 @@ class Micrograph:
         particle_z_scores: np.ndarray = None,
         particle_mip_values: np.ndarray = None,
     ) -> "ParticleStack":
-        """Extract particles from the micrograph using the provided particle positions
-        and other optional information about each particle.
+        """Extract particles from the micrograph using the provided particle
+        positions and other optional information about each particle.
 
         Args:
         -----
@@ -152,7 +158,8 @@ class Micrograph:
         Returns:
         --------
 
-            ParticleStack: A ParticleStack object containing the extracted particles.
+            ParticleStack: A ParticleStack object containing the extracted
+                particles.
 
         """
         self._validate_to_particle_stack_inputs(
@@ -163,7 +170,6 @@ class Micrograph:
             particle_z_scores,
             particle_mip_values,
         )
-
 
         # Iterate over each position and extract the particle
         particle_images = []
@@ -178,23 +184,24 @@ class Micrograph:
                     handle_bounds,
                 )
             )
-            
+
         # DEBUG make mosaic of particle images
         nrows = int(np.ceil(np.sqrt(len(particle_images))))
         ncols = int(np.ceil(len(particle_images) / nrows))
 
         import matplotlib.pyplot as plt
+
         fig, axs = plt.subplots(nrows, ncols, figsize=(24, 24))
-        
+
         for i, img in enumerate(particle_images):
             row = i // ncols
             col = i % ncols
             axs[row, col].imshow(img, cmap="gray")
-            
+
         plt.show()
-            
+
         particle_images = np.array(particle_images)
-            
+
         # Convert x, y positions to a single numpy array
         particle_positions = np.vstack((positions_x, positions_y)).T
 
@@ -207,56 +214,5 @@ class Micrograph:
             particle_defocus_parameters=particle_defocus_parameters,
             particle_z_scores=particle_z_scores,
             particle_mip_values=particle_mip_values,
-            micrograph_reference_paths=[self.image_path]
+            micrograph_reference_paths=[self.image_path],
         )
-
-    # def plot_particle_boxes(
-    #     self,
-    #     box_size: Tuple[int, int],
-    #     particle_positions: np.ndarray,
-    #     particle_orientations: np.ndarray = None,  # Unused but kept for consistency
-    #     particle_defocus_parameters: np.ndarray = None,  # Unused but kept for consistency
-    #     particle_z_scores: np.ndarray = None,  # Unused but kept for consistency
-    #     particle_mip_values: np.ndarray = None,  # Unused but kept for consistency
-    #     position_reference: Literal["center", "corner"] = "center",
-    # ) -> None:
-    #     """Plot the micrograph with red boxes indicating particle positions.
-        
-    #     Args match to_particle_stack() for convenience. Only box_size, particle_positions,
-    #     and position_reference are used.
-    #     """
-    #     import matplotlib.pyplot as plt
-    #     from matplotlib.patches import Rectangle
-        
-    #     # Adjust positions if reference point is centered
-    #     positions = particle_positions.copy()
-    #     if position_reference == "center":
-    #         positions = positions - np.array(box_size) // 2
-        
-    #     tmp = self.image_array
-    #     pts = np.where(tmp > 7.85)
-    #     tmp = gaussian_filter(tmp, sigma=5)
-        
-    #     # Create the plot
-    #     fig, ax = plt.subplots(figsize=(24, 24))
-    #     ax.imshow(tmp, cmap="gray")
-        
-    #     # Scatter where image is above threshold
-    #     # TODO: Remove later
-    #     ax.scatter(pts[1], pts[0], color="red", s=4, alpha=0.5)
-    #     ax.scatter(positions[:, 1], positions[:, 0], color="blue", s=10, marker="x", alpha=0.5)
-        
-    #     # # Add boxes for each particle
-    #     # for pos in positions:
-    #     #     x, y = pos
-    #     #     rect = Rectangle(
-    #     #         (x, y),
-    #     #         box_size[1],  # width
-    #     #         box_size[0],  # height
-    #     #         fill=False,
-    #     #         color="red",
-    #     #         linewidth=1
-    #     #     )
-    #     #     ax.add_patch(rect)
-        
-    #     plt.show()
