@@ -110,7 +110,7 @@ def calculate_scattering_potential_2d(
     y = (y - bins[1].min()) / (bins[1].max() - bins[1].min()) * (bins[1].size - 1)
 
     # Calculate the scattering potential for each atom
-    histogram = np.zeros(shapes)
+    histogram = np.zeros(shape)
     for i in range(len(atom_ids)):
         x_int = np.round(x[i]).astype(np.int32)
         y_int = np.round(y[i]).astype(np.int32)

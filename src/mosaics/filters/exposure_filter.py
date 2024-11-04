@@ -69,7 +69,8 @@ def calculate_cumulative_exposure_filter(
     Args:
         shape (tuple): The shape of the image to create the exposure filter for.
         pixel_size (float): The size of a pixel in the image in physical units.
-        exposure_time (float): The exposure time of the image in seconds.
+        exposure_start (float): The starting exposure in e-/A^2.
+        exposure_end (float): The ending exposure in e-/A^2.
 
     Returns:
         np.ndarray: A 2D array for the cumulative exposure filter.
@@ -84,3 +85,34 @@ def calculate_cumulative_exposure_filter(
     )
 
     return exposure_filter / (exposure_end - exposure_start)
+
+
+def apply_cumulative_exposure_filter(
+    image: np.ndarray,
+    pixel_size: float,
+    exposure_start: float,
+    exposure_end: float,
+) -> np.ndarray:
+    """Helper function to apply a cumulative exposure filter to an image and return the
+    real-space filtered image.
+    
+    Args:
+        image (np.ndarray): The image to apply the filter to.
+        pixel_size (float): The size of a pixel in the image in physical units.
+        exposure_start (float): The starting exposure in e-/A^2.
+        exposure_end (float): The ending exposure in e-/A^2.
+        
+    Returns:
+        np.ndarray: The filtered image.
+    """
+    exposure_filter = calculate_cumulative_exposure_filter(
+        image.shape, pixel_size, exposure_start, exposure_end
+    )
+    exposure_filter = np.fft.ifftshift(exposure_filter)
+    
+    # Apply the filter in Fourier space
+    image_fft = np.fft.fft2(image)
+    image_fft *= exposure_filter
+    image_filtered = np.fft.ifft2(image_fft)
+    
+    return np.real(image_filtered)

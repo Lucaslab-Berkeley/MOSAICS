@@ -73,7 +73,6 @@ class DirectCoordinateProjector(AbstractProjector):
         super().__init__(pixel_size, projection_shape)
         
         # TODO: Implement validation checks for different inputs
-        # TODO: Implement b-factor scaling
 
         if center_coords_by_mass:
             atomic_coordinates -= np.average(atomic_coordinates, axis=0)
@@ -88,10 +87,6 @@ class DirectCoordinateProjector(AbstractProjector):
 
         TODO: finish docstring
         # """
-        # # Transform held b-factors into variances for the Gaussian kernel
-        # sigma2 = self.b_factors / (8 * np.pi ** 2 * self.pixel_size ** 2)
-        # # sigma2 += self.pixel_size ** 2 / 12  # From top-hat on pixel size
-        # # sigma2 += 0.27 / self.pixel_size  # Inherent variance fit from PSF?
         
         r = Rotation.from_euler("ZYZ", [phi, theta, psi], degrees=False)
 
@@ -105,14 +100,6 @@ class DirectCoordinateProjector(AbstractProjector):
         bins1 = (np.arange(self.projection_shape[0]) + 0.5) * self.pixel_size
         bins0 = bins0 - bins0[-1] / 2
         bins1 = bins1 - bins1[-1] / 2
-
-        # projection = histogram_2d_gaussian_interpolation(
-        #     x=projected_coordinates[:, 0],
-        #     y=projected_coordinates[:, 1],
-        #     sigma=np.sqrt(sigma2),  # NOTE: Need to also account for pixel size
-        #     bins=(bins0, bins1),
-        #     alpha=0.01,
-        # )
         
         projection = calculate_scattering_potential_2d(
             x=projected_coordinates[:, 0],
@@ -246,4 +233,4 @@ class FourierSliceProjector(AbstractProjector):
         projection = np.fft.ifftn(fourier_slice)
         projection = np.fft.ifftshift(projection)
 
-        return projection
+        return projection.real
