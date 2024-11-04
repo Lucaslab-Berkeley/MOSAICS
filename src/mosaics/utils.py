@@ -228,7 +228,13 @@ def get_cropped_region_of_image(
         
         x_bounds = [max(x_bounds[0], 0), min(x_bounds[1], image.shape[1])]
         y_bounds = [max(y_bounds[0], 0), min(y_bounds[1], image.shape[0])]
-                
+
+    ### DEBUG: Flip the image along the y-axis
+    # tmp_image = image[::-1, :]
+    # tmp_image = image[:, ::-1]
+    # tmp_image = image[::-1, ::-1]
+    ### END DEBUG
+    
     tmp_image = image[y_bounds[0]:y_bounds[1], x_bounds[0]:x_bounds[1]]
 
     if _bounds_flag and handle_bounds == "fill":

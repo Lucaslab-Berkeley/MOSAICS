@@ -175,8 +175,19 @@ class ParticleStack:
         self.particle_mip_values = particle_mip_values
         self.micrograph_reference_paths = micrograph_reference_paths
         
-    def __repr__(self):
-        raise NotImplementedError
+    def __repr__(self) -> str:
+        """Get string representation of the ParticleStack object."""
+        mem_location = hex(id(self))
+        string = f"ParticleStack object at {mem_location}:"
+        string += f"\n\t{self.particle_images.shape[0]} particles."
+        string += f"\n\t{self.box_size} pixels at {self.pixel_size} Å/pixel."
+        string += f"\n\tIncludes positions: {self.particle_positions is not None}"
+        string += f"\n\tIncludes orientations: {self.particle_orientations is not None}"
+        string += f"\n\tIncludes defocus parameters: {self.particle_defocus_parameters is not None}"
+        string += f"\n\tIncludes z-scores: {self.particle_z_scores is not None}"
+        string += f"\n\tIncludes MIP values: {self.particle_mip_values is not None}"
+        
+        return string
 
     def __add__(self, other):
         """Add two ParticleStack instances by combining the particle images and
