@@ -172,29 +172,39 @@ def get_whitening_filter(
     )
 
     whitening_filter = 1 / power_spectrum_2D
-    
+
     return whitening_filter
 
 
-def apply_whitening_filter(image: np.ndarray, pixel_size: float, is_fourier_space: bool = False, **kwargs) -> np.ndarray:
+def apply_whitening_filter(
+    image: np.ndarray,
+    pixel_size: float,
+    is_fourier_space: bool = False,
+    **kwargs,
+) -> np.ndarray:
     """Apply a whitening filter to an image.
-    
+
     TODO: Docstring
     """
     if is_fourier_space:
-        raise ValueError("Current implementation requires image to be in real space.")
-    
+        raise ValueError(
+            "Current implementation requires image to be in real space."
+        )
+
     whitening_filter = get_whitening_filter(
-        image, pixel_size=pixel_size, is_fourier_space=is_fourier_space, **kwargs
+        image,
+        pixel_size=pixel_size,
+        is_fourier_space=is_fourier_space,
+        **kwargs,
     )
-    
+
     # Apply the whitening filter in Fourier space
     image = np.fft.fft2(image)
     image = np.fft.fftshift(image)
-    
+
     image *= whitening_filter
-    
+
     image = np.fft.ifftshift(image)
     image = np.fft.ifft2(image)
-    
+
     return np.real(image)

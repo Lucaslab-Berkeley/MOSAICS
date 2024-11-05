@@ -261,7 +261,6 @@ def get_cropped_region_of_image(
 
     tmp_image = image[y_bounds[0] : y_bounds[1], x_bounds[0] : x_bounds[1]]
 
-
     if _bounds_flag and handle_bounds == "fill":
         tmp_image = np.pad(
             tmp_image,
