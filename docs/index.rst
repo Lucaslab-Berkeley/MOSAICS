@@ -30,3 +30,4 @@ Examples
 
    notebooks/import_pdb_structure.ipynb
    notebooks/import_scattering_density.ipynb
+   notebooks/compare_projectors.ipynb

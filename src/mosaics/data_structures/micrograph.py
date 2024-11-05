@@ -192,19 +192,50 @@ class Micrograph:
             )
 
         # DEBUG make mosaic of particle images
-        nrows = int(np.ceil(np.sqrt(len(particle_images))))
-        ncols = int(np.ceil(len(particle_images) / nrows))
+        # ###         DEBUG         ###
+        # ### Plot particle images  ###
+        # import matplotlib.pyplot as plt
 
-        import matplotlib.pyplot as plt
+        # nrows = int(np.ceil(np.sqrt(len(particle_images))))
+        # ncols = int(np.ceil(len(particle_images) / nrows))
+        # fig, axs = plt.subplots(nrows, ncols, figsize=(24, 24))
 
-        fig, axs = plt.subplots(nrows, ncols, figsize=(24, 24))
+        # for i, img in enumerate(particle_images):
+        #     row = i // ncols
+        #     col = i % ncols
+        #     axs[row, col].imshow(img, cmap="gray")
 
-        for i, img in enumerate(particle_images):
-            row = i // ncols
-            col = i % ncols
-            axs[row, col].imshow(img, cmap="gray")
+        #     # Show the maximum value around the center of the image
+        #     max_val = np.max(
+        #         img[
+        #             img.shape[0] // 2 - 10 : img.shape[0] // 2 + 10,
+        #             img.shape[1] // 2 - 10 : img.shape[1] // 2 + 10,
+        #         ]
+        #     )
+        #     plt.text(
+        #         0.2,
+        #         0.2,
+        #         f"{max_val:.4f}",
+        #         transform=axs[row, col].transAxes,
+        #         color="red",
+        #         fontsize=12,
+        #         ha="center",
+        #         va="center",
+        #     )
+        #     expected_max_val = particle_z_scores[i]
+        #     plt.text(
+        #         0.2,
+        #         0.3,
+        #         f"{expected_max_val:.4f}",
+        #         transform=axs[row, col].transAxes,
+        #         color="orange",
+        #         fontsize=12,
+        #         ha="center",
+        #         va="center",
+        #     )
 
-        plt.show()
+        # plt.show()
+        # ### END DEBUG ###
 
         particle_images = np.array(particle_images)
 
