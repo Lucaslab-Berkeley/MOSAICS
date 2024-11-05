@@ -1,7 +1,10 @@
-from typing import List, Tuple
+from typing import List
+from typing import Optional
+from typing import Tuple
 
 import numpy as np
 
+from mosaics.data_structures.micrograph import Micrograph
 from mosaics.utils import parse_out_coordinates_result
 
 
@@ -39,6 +42,7 @@ class ParticleStack:
 
     """
 
+    # TODO: Sort out optional attributes and default values
     pixel_size: float  # in Angstroms
     box_size: Tuple[int, int]  # in pixels
     particle_images: np.ndarray
@@ -47,7 +51,7 @@ class ParticleStack:
     particle_defocus_parameters: np.ndarray  # (z1, z2, angle) in Angstroms
     particle_z_scores: np.ndarray
     particle_mip_values: np.ndarray
-    micrograph_reference_paths: List[str]
+    micrograph_reference_paths: Optional[List[str]]
 
     @classmethod
     def from_out_coordinates_and_micrograph(
@@ -75,19 +79,26 @@ class ParticleStack:
         # Z-scores (SNR) and orientations per particle
         particle_z_scores = coord_df["Peak"].values
         particle_orientations = np.stack(
-            (coord_df["Psi"].values, coord_df["Theta"].values, coord_df["Phi"].values),
+            (
+                coord_df["Psi"].values,
+                coord_df["Theta"].values,
+                coord_df["Phi"].values,
+            ),
             axis=-1,
         )
 
         # Calculate the absolute defocus parameters for each particle
-        ctf = micrograph.ctf
-        defocus_1 = ctf.defocus_1 + coord_df["Z"].values
-        defocus_2 = ctf.defocus_2 + coord_df["Z"].values
-        defocus_angle = np.full(defocus_1.size, ctf.astigmatism_azimuth)
-        particle_defocus_parameters = np.stack(
-            (defocus_1, defocus_2, defocus_angle),
-            axis=-1,
-        )
+        if micrograph.ctf is not None:
+            ctf = micrograph.ctf
+            defocus_1 = ctf.defocus_1 + coord_df["Z"].values
+            defocus_2 = ctf.defocus_2 + coord_df["Z"].values
+            defocus_angle = np.full(defocus_1.size, ctf.astigmatism_azimuth)
+            particle_defocus_parameters = np.stack(
+                (defocus_1, defocus_2, defocus_angle),
+                axis=-1,
+            )
+        else:
+            particle_defocus_parameters = None
 
         return micrograph.to_particle_stack(
             box_size=box_size,
@@ -102,7 +113,11 @@ class ParticleStack:
     @classmethod
     def concatenate(cls, particle_stacks):
         """Concatenate a list of ParticleStack instances."""
-        raise NotImplementedError
+        new_particle_stack = particle_stacks[0]
+        for particle_stack in particle_stacks[1:]:
+            new_particle_stack += particle_stack
+
+        return new_particle_stack
 
     def __init__(
         self,
@@ -114,7 +129,7 @@ class ParticleStack:
         particle_defocus_parameters: np.ndarray = None,
         particle_z_scores: np.ndarray = None,
         particle_mip_values: np.ndarray = None,
-        micrograph_reference_paths: List[str] = None,
+        micrograph_reference_paths: Optional[List[str]] = None,
     ):
         self.pixel_size = pixel_size
         self.box_size = box_size
@@ -153,7 +168,10 @@ class ParticleStack:
             [self.particle_orientations, other.particle_orientations], axis=0
         )
         new_particle_defocus_parameters = np.concatenate(
-            [self.particle_defocus_parameters, other.particle_defocus_parameters],
+            [
+                self.particle_defocus_parameters,
+                other.particle_defocus_parameters,
+            ],
             axis=0,
         )
         new_particle_z_scores = np.concatenate(
@@ -166,7 +184,7 @@ class ParticleStack:
             self.micrograph_reference_paths + other.micrograph_reference_paths
         )
 
-        return cls(
+        return ParticleStack(
             self.pixel_size,
             self.box_size,
             new_particle_images,
@@ -178,50 +196,52 @@ class ParticleStack:
             new_micrograph_reference_paths,
         )
 
-    def to_json(self) -> dict:
-        """Convert the ParticleStack object to a JSON-serializable dictionary."""
-        # TODO: Export the particle stack array as a separate .mrc file
+    # def to_json(self) -> dict:
+    #     """Convert the ParticleStack object to a JSON-serializable dictionary
+    #     and return it.
+    #     """
+    #     # TODO: Export the particle stack array as a separate .mrc file
 
-        return {
-            "pixel_size": self.pixel_size,
-            "particle_orientations": (
-                self.particle_orientations.tolist()
-                if self.particle_orientations is not None
-                else None
-            ),
-            "particle_positions": (
-                self.particle_positions.tolist()
-                if self.particle_positions is not None
-                else None
-            ),
-            "particle_defocus_parameters": (
-                self.particle_defocus_parameters.tolist()
-                if self.particle_defocus_parameters is not None
-                else None
-            ),
-        }
+    #     return {
+    #         "pixel_size": self.pixel_size,
+    #         "particle_orientations": (
+    #             self.particle_orientations.tolist()
+    #             if self.particle_orientations is not None
+    #             else None
+    #         ),
+    #         "particle_positions": (
+    #             self.particle_positions.tolist()
+    #             if self.particle_positions is not None
+    #             else None
+    #         ),
+    #         "particle_defocus_parameters": (
+    #             self.particle_defocus_parameters.tolist()
+    #             if self.particle_defocus_parameters is not None
+    #             else None
+    #         ),
+    #     }
 
-    @classmethod
-    def from_json(cls, json_dict: dict) -> "ParticleStack":
-        """Create a ParticleStack object from a JSON dictionary."""
-        return cls(
-            pixel_size=json_dict["pixel_size"],
-            particle_images_array=None,  # This should be loaded separately
-            particle_orientations=(
-                np.array(json_dict["particle_orientations"])
-                if json_dict["particle_orientations"] is not None
-                else None
-            ),
-            particle_positions=(
-                np.array(json_dict["particle_positions"])
-                if json_dict["particle_positions"] is not None
-                else None
-            ),
-            particle_defocus_parameters=(
-                np.array(json_dict["particle_defocus_parameters"])
-                if json_dict["particle_defocus_parameters"] is not None
-                else None
-            ),
-        )
+    # @classmethod
+    # def from_json(cls, json_dict: dict) -> "ParticleStack":
+    #     """Create a ParticleStack object from a JSON dictionary."""
+    #     return cls(
+    #         pixel_size=json_dict["pixel_size"],
+    #         particle_images=None,  # This should be loaded separately
+    #         particle_orientations=(
+    #             np.array(json_dict["particle_orientations"])
+    #             if json_dict["particle_orientations"] is not None
+    #             else None
+    #         ),
+    #         particle_positions=(
+    #             np.array(json_dict["particle_positions"])
+    #             if json_dict["particle_positions"] is not None
+    #             else None
+    #         ),
+    #         particle_defocus_parameters=(
+    #             np.array(json_dict["particle_defocus_parameters"])
+    #             if json_dict["particle_defocus_parameters"] is not None
+    #             else None
+    #         ),
+    #     )
 
     # TODO: to/from .star

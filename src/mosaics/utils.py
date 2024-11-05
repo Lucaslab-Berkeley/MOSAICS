@@ -1,14 +1,15 @@
-from pathlib import Path
-from typing import Literal, Tuple, Union
+from typing import Literal
+from typing import Tuple
+from typing import Union
 
 import numpy as np
 import pandas as pd
 
 
 def _calculate_pixel_radial_distance(shape: Tuple[int, int]) -> np.ndarray:
-    """Helper function for getting a radial distance map for an image with a given
-    shape. Position for which the radial distance is calculated is assumed at the
-    center of the image.
+    """Helper function for getting a radial distance map for an image with a
+    given shape. Position for which the radial distance is calculated is
+    assumed at the center of the image.
     """
     x = np.arange(shape[1]) - shape[1] / 2
     y = np.arange(shape[0]) - shape[0] / 2
@@ -21,9 +22,9 @@ def _calculate_pixel_radial_distance(shape: Tuple[int, int]) -> np.ndarray:
 def _calculate_pixel_spatial_frequency(
     shape: Tuple[int, int], pixel_size: float
 ) -> np.ndarray:
-    """Helper function for getting a spatial frequency map for an image with a given
-    shape and pixel size. Position for which the spatial frequency is calculated is
-    assumed at the center of the image.
+    """Helper function for getting a spatial frequency map for an image with a
+    given shape and pixel size. Position for which the spatial frequency is
+    calculated is assumed at the center of the image.
     """
     x = np.fft.fftfreq(shape[1], d=pixel_size)
     y = np.fft.fftfreq(shape[0], d=pixel_size)
@@ -49,13 +50,17 @@ def _calculate_pixel_frequency_angle(
     return angle
 
 
-def _gaussian_kernel_distance_cutoff(sigma: float, alpha: float = 0.01) -> float:
-    """Given an isotropic 2D Gaussian with standard deviation sigma, in units of pixels,
-    this function returns the radius of pixels to consider for the kernel. The cutoff
-    value, alpha, is relative to the maximum value of the Gaussian.
+def _gaussian_kernel_distance_cutoff(
+    sigma: float, alpha: float = 0.01
+) -> float:
+    """Given an isotropic 2D Gaussian with standard deviation sigma, in units
+    of pixels, this function returns the radius of pixels to consider for the
+    kernel. The cutoff value, alpha, is relative to the maximum value of the
+    Gaussian.
 
     Parameters:
-        (float) sigma: Standard deviation of the Gaussian kernel, in units of pixels.
+        (float) sigma: Standard deviation of the Gaussian kernel, in units of
+            pixels.
         (float) alpha: Relative cutoff value for the Gaussian kernel.
 
     Returns:
@@ -76,17 +81,18 @@ def histogram_2d_gaussian_interpolation(
     # density: bool = False,
     alpha: float = 0.01,
 ) -> np.ndarray:
-    """Given a set of 2D points with associated values, interpolate the values using a
-    2D Gaussian kernel. Points are assumed to be transformed into pixel-like
-    coordinates (e.g. ranging from (0, 0) to (shape[0], shape[1])).
+    """Given a set of 2D points with associated values, interpolate the values
+    using a 2D Gaussian kernel. Points are assumed to be transformed into
+    pixel-like coordinates (e.g. ranging from (0, 0) to (shape[0], shape[1])).
 
 
-    NOTE: The current implementation requires the kernel be isotropic with the same
-    standard deviation for all points.
+    NOTE: The current implementation requires the kernel be isotropic with the
+    same standard deviation for all points.
 
     Parameters:
         (np.ndarray) points: Array of 2D points with associated values.
-        (float) sigma: Standard deviation of the Gaussian kernel, in units of pixels.
+        (float) sigma: Standard deviation of the Gaussian kernel, in units of
+            pixels.
         (float) alpha: Relative cutoff value for the Gaussian kernel.
         (Tuple[int, int]) shape: Shape of the output image.
 
@@ -102,7 +108,9 @@ def histogram_2d_gaussian_interpolation(
     # Checks for expected input types
     assert len(x) == len(y), "Length of x and y must match."
     assert len(x) == len(sigma), "Length sigma must mach number of points."
-    assert len(x) == len(weights), "Length of weights must match number of points."
+    assert len(x) == len(
+        weights
+    ), "Length of weights must match number of points."
     assert len(bins) == 2, "Bins must be a tuple of two arrays."
 
     # Set up 2D grid of integer points for the histogram
@@ -112,8 +120,16 @@ def histogram_2d_gaussian_interpolation(
     shape = xx.shape
 
     # Transform x and y to pixel-like coordinates
-    x = (x - bins[0].min()) / (bins[0].max() - bins[0].min()) * (bins[0].size - 1)
-    y = (y - bins[1].min()) / (bins[1].max() - bins[1].min()) * (bins[1].size - 1)
+    x = (
+        (x - bins[0].min())
+        / (bins[0].max() - bins[0].min())
+        * (bins[0].size - 1)
+    )
+    y = (
+        (y - bins[1].min())
+        / (bins[1].max() - bins[1].min())
+        * (bins[1].size - 1)
+    )
 
     # Based on sigma, find distance of points to consider
     d_cutoff = int(_gaussian_kernel_distance_cutoff(sigma.max(), alpha) + 1)
@@ -138,7 +154,9 @@ def histogram_2d_gaussian_interpolation(
     return histogram
 
 
-# def histogram_2d_linear_interpolation(points: np.ndarray, shape: Tuple[int, int]) -> np.ndarray:
+# def histogram_2d_linear_interpolation(
+#     points: np.ndarray, shape: Tuple[int, int]
+# ) -> np.ndarray:
 def histogram_2d_linear_interpolation(
     x: np.ndarray,
     y: np.ndarray,
@@ -146,9 +164,9 @@ def histogram_2d_linear_interpolation(
     # density: bool = False,
     weights: np.ndarray = None,
 ) -> np.ndarray:
-    """Given a set of 2D points with associated values, interpolate the values using a
-    2D linear interpolation. Points are assumed to be transformed into pixel-like
-    coordinates (e.g. ranging from (0, 0) to (shape[0], shape[1])).
+    """Given a set of 2D points with associated values, interpolate the values
+    using a 2D linear interpolation. Points are assumed to be transformed into
+    pixel-like coordinates (e.g. ranging from (0, 0) to (shape[0], shape[1])).
 
     Parameters:
         (np.ndarray) points: Array of 2D points with associated values.
@@ -159,11 +177,21 @@ def histogram_2d_linear_interpolation(
     assert len(x) == len(y), "Length of x and y must match."
 
     if weights is not None:
-        assert len(weights) == len(x), "Length of weights must match number of points."
+        assert len(weights) == len(
+            x
+        ), "Length of weights must match number of points."
 
     # Transform x and y to pixel-like coordinates
-    x = (x - bins[0].min()) / (bins[0].max() - bins[0].min()) * (bins[0].size - 1)
-    y = (y - bins[1].min()) / (bins[1].max() - bins[1].min()) * (bins[1].size - 1)
+    x = (
+        (x - bins[0].min())
+        / (bins[0].max() - bins[0].min())
+        * (bins[0].size - 1)
+    )
+    y = (
+        (y - bins[1].min())
+        / (bins[1].max() - bins[1].min())
+        * (bins[1].size - 1)
+    )
 
     histogram = np.zeros((bins[0].size, bins[1].size), dtype=np.float32)
 
@@ -194,8 +222,8 @@ def get_cropped_region_of_image(
     positions_reference: Literal["center", "corner"] = "center",
     handle_bounds: Literal["crop", "fill", "error"] = "error",
 ) -> np.ndarray:
-    """Crop the region with given box size and position out of an image. Handles
-    position references and bounds checking.
+    """Crop the region with given box size and position out of an image.
+    Handles position references and bounds checking.
 
     TODO: Finish docstring
     """
@@ -245,9 +273,10 @@ def get_cropped_region_of_image(
 
 
 def parse_out_coordinates_result(filename) -> pd.DataFrame:
-    """Parse the columns of the make_template_result out_coordinates.txt file and place
-    all the columns into a pandas DataFrame. First row defines the column names,
-    separated by whitespace, with the subsequent rows in the file being the data.
+    """Parse the columns of the make_template_result out_coordinates.txt file
+    and place all the columns into a pandas DataFrame. First row defines the
+    column names, separated by whitespace, with the subsequent rows in the file
+    being the data.
 
     Arguments:
         (str) filename: The path to the out_coordinates.txt file to parse
@@ -258,8 +287,11 @@ def parse_out_coordinates_result(filename) -> pd.DataFrame:
     # Get the column names from the first comment line
     with open(filename, "r") as f:
         first_line = f.readline()
-    column_names = first_line.strip().split()[1:]  # First character is a comment
+    # First character is a comment
+    column_names = first_line.strip().split()[1:]
 
-    coord_df = pd.read_csv(filename, sep=r"\s+", skiprows=1, names=column_names)
+    coord_df = pd.read_csv(
+        filename, sep=r"\s+", skiprows=1, names=column_names
+    )
 
     return coord_df

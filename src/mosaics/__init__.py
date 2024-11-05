@@ -1,5 +1,6 @@
-from mosaics.data_structures.contrast_transfer_function import \
-    ContrastTransferFunction
+from mosaics.data_structures.contrast_transfer_function import (  # noqa: E501
+    ContrastTransferFunction,
+)
 from mosaics.data_structures.micrograph import Micrograph
 from mosaics.data_structures.particle_stack import ParticleStack
 

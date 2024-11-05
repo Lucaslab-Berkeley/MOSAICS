@@ -28,3 +28,19 @@ pip install -r requirements-docs.txt
 cd docs
 make html
 ```
+
+## Running code formatting checks (developers/contributors)
+
+MOSAICS uses the pre-commit package to auto-format and ensure all code conforms to the same standards.
+If you've just downloaded and built MOSAICS, you will need to first install the formatting hooks:
+```
+pre-commit install
+```
+Then, you can run pre-commit against all staged files using,
+```
+pre-commit run
+```
+or to run against all files in the repository run,
+```
+pre-commit run --all-files
+```

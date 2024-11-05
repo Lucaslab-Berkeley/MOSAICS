@@ -3,7 +3,9 @@ from typing import Literal
 import numpy as np
 
 
-def cross_correlate_same_shape(image: np.ndarray, template: np.ndarray) -> float:
+def cross_correlate_same_shape(
+    image: np.ndarray, template: np.ndarray
+) -> float:
     """Cross-correlated an image and template (both provided in Fourier space)
     which have the same shape. The result will be a single scalar value.
 

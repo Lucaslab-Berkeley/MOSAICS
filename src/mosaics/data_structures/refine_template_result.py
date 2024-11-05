@@ -1,7 +1,10 @@
-import json
+from typing import Optional
 
 import mrcfile
 import numpy as np
+
+from mosaics.data_structures.micrograph import Micrograph
+from mosaics.data_structures.reference_template import ReferenceTemplate
 
 
 class RefineTemplateResult:
@@ -28,12 +31,12 @@ class RefineTemplateResult:
     refined_defocus: np.ndarray  # Relative to micrograph defocus
 
     # Paths to output files
-    refined_mip_path: str
-    refined_mip_scaled_path: str
-    refined_phi_path: str
-    refined_theta_path: str
-    refined_psi_path: str
-    refined_defocus_path: str
+    refined_mip_path: Optional[str] = None
+    refined_mip_scaled_path: Optional[str] = None
+    refined_phi_path: Optional[str] = None
+    refined_theta_path: Optional[str] = None
+    refined_psi_path: Optional[str] = None
+    refined_defocus_path: Optional[str] = None
 
     @classmethod
     def from_refine_template_output_files(
@@ -58,8 +61,12 @@ class RefineTemplateResult:
         refined_phi = mrcfile.open(refined_phi_path).data.copy().squeeze()
         refined_theta = mrcfile.open(refined_theta_path).data.copy().squeeze()
         refined_psi = mrcfile.open(refined_psi_path).data.copy().squeeze()
-        refined_defocus = mrcfile.open(refined_defocus_path).data.copy().squeeze()
-        refined_mip_scaled = mrcfile.open(refined_mip_scaled_path).data.copy().squeeze()
+        refined_defocus = (
+            mrcfile.open(refined_defocus_path).data.copy().squeeze()
+        )
+        refined_mip_scaled = (
+            mrcfile.open(refined_mip_scaled_path).data.copy().squeeze()
+        )
 
         # Find where the mip is non-zero for locating each particle.
         particle_positions = np.where(refined_mip_2d != 0)
@@ -111,12 +118,12 @@ class RefineTemplateResult:
         refined_theta: np.ndarray,
         refined_psi: np.ndarray,
         refined_defocus: np.ndarray,
-        refined_mip_path: str = None,
-        refined_mip_scaled_path: str = None,
-        refined_phi_path: str = None,
-        refined_theta_path: str = None,
-        refined_psi_path: str = None,
-        refined_defocus_path: str = None,
+        refined_mip_path: Optional[str] = None,
+        refined_mip_scaled_path: Optional[str] = None,
+        refined_phi_path: Optional[str] = None,
+        refined_theta_path: Optional[str] = None,
+        refined_psi_path: Optional[str] = None,
+        refined_defocus_path: Optional[str] = None,
     ):
         self.reference_template = reference_template
         self.micrograph = micrograph
@@ -139,64 +146,72 @@ class RefineTemplateResult:
         self.refined_psi_path = refined_psi_path
         self.refined_defocus_path = refined_defocus_path
 
-    def to_json(self) -> dict:
-        """Convert the RefineTemplateResult object to a JSON-serializable
-        dictionary. Large arrays are not included, only their file paths are
-        stored.
-        """
-        return {
-            "reference_template": self.reference_template.to_json(),
-            "micrograph": self.micrograph.to_json(),
-            "z_score_threshold": self.z_score_threshold,
-            "num_particles": self.num_particles,
-            "refined_mip_path": self.refined_mip_path,
-            "refined_mip_scaled_path": self.refined_mip_scaled_path,
-            "refined_phi_path": self.refined_phi_path,
-            "refined_theta_path": self.refined_theta_path,
-            "refined_psi_path": self.refined_psi_path,
-            "refined_defocus_path": self.refined_defocus_path,
-        }
+    # def to_json(self) -> dict:
+    #     """Convert the RefineTemplateResult object to a JSON-serializable
+    #     dictionary. Large arrays are not included, only their file paths are
+    #     stored.
+    #     """
+    #     return {
+    #         "reference_template": self.reference_template.to_json(),
+    #         "micrograph": self.micrograph.to_json(),
+    #         "z_score_threshold": self.z_score_threshold,
+    #         "num_particles": self.num_particles,
+    #         "refined_mip_path": self.refined_mip_path,
+    #         "refined_mip_scaled_path": self.refined_mip_scaled_path,
+    #         "refined_phi_path": self.refined_phi_path,
+    #         "refined_theta_path": self.refined_theta_path,
+    #         "refined_psi_path": self.refined_psi_path,
+    #         "refined_defocus_path": self.refined_defocus_path,
+    #     }
 
-    @classmethod
-    def from_json(cls, json_dict: dict) -> "RefineTemplateResult":
-        """Create a RefineTemplateResult object from a JSON dictionary.
-        Arrays are loaded from the stored file paths."""
-        # Load reference objects
-        reference_template = ReferenceTemplate.from_json(
-            json_dict["reference_template"]
-        )
-        micrograph = Micrograph.from_json(json_dict["micrograph"])
+    # @classmethod
+    # def from_json(cls, json_dict: dict) -> "RefineTemplateResult":
+    #     """Create a RefineTemplateResult object from a JSON dictionary.
+    #     Arrays are loaded from the stored file paths."""
+    #     # Load reference objects
+    #     reference_template = ReferenceTemplate.from_json(
+    #         json_dict["reference_template"]
+    #     )
+    #     micrograph = Micrograph.from_json(json_dict["micrograph"])
 
-        # Load arrays from paths
-        refined_mip_2d = np.load(json_dict["refined_mip_path"])
-        particle_positions = np.where(refined_mip_2d != 0)
-        num_particles = particle_positions[0].size
+    #     # Load arrays from paths
+    #     refined_mip_2d = np.load(json_dict["refined_mip_path"])
+    #     particle_positions = np.where(refined_mip_2d != 0)
+    #     num_particles = particle_positions[0].size
 
-        refined_mip = refined_mip_2d[particle_positions]
-        refined_mip_scaled = np.load(json_dict["refined_mip_scaled_path"])[
-            particle_positions
-        ]
-        refined_phi = np.load(json_dict["refined_phi_path"])[particle_positions]
-        refined_theta = np.load(json_dict["refined_theta_path"])[particle_positions]
-        refined_psi = np.load(json_dict["refined_psi_path"])[particle_positions]
-        refined_defocus = np.load(json_dict["refined_defocus_path"])[particle_positions]
+    #     refined_mip = refined_mip_2d[particle_positions]
+    #     refined_mip_scaled = np.load(json_dict["refined_mip_scaled_path"])[
+    #         particle_positions
+    #     ]
+    #     refined_phi = np.load(json_dict["refined_phi_path"])[
+    #         particle_positions
+    #     ]
+    #     refined_theta = np.load(json_dict["refined_theta_path"])[
+    #         particle_positions
+    #     ]
+    #     refined_psi = np.load(json_dict["refined_psi_path"])[
+    #         particle_positions
+    #     ]
+    #     refined_defocus = np.load(json_dict["refined_defocus_path"])[
+    #         particle_positions
+    #     ]
 
-        return cls(
-            reference_template=reference_template,
-            micrograph=micrograph,
-            z_score_threshold=json_dict["z_score_threshold"],
-            num_particles=num_particles,
-            particle_positions=particle_positions,
-            refined_mip=refined_mip,
-            refined_mip_scaled=refined_mip_scaled,
-            refined_phi=refined_phi,
-            refined_theta=refined_theta,
-            refined_psi=refined_psi,
-            refined_defocus=refined_defocus,
-            refined_mip_path=json_dict["refined_mip_path"],
-            refined_mip_scaled_path=json_dict["refined_mip_scaled_path"],
-            refined_phi_path=json_dict["refined_phi_path"],
-            refined_theta_path=json_dict["refined_theta_path"],
-            refined_psi_path=json_dict["refined_psi_path"],
-            refined_defocus_path=json_dict["refined_defocus_path"],
-        )
+    #     return cls(
+    #         reference_template=reference_template,
+    #         micrograph=micrograph,
+    #         z_score_threshold=json_dict["z_score_threshold"],
+    #         num_particles=num_particles,
+    #         particle_positions=particle_positions,
+    #         refined_mip=refined_mip,
+    #         refined_mip_scaled=refined_mip_scaled,
+    #         refined_phi=refined_phi,
+    #         refined_theta=refined_theta,
+    #         refined_psi=refined_psi,
+    #         refined_defocus=refined_defocus,
+    #         refined_mip_path=json_dict["refined_mip_path"],
+    #         refined_mip_scaled_path=json_dict["refined_mip_scaled_path"],
+    #         refined_phi_path=json_dict["refined_phi_path"],
+    #         refined_theta_path=json_dict["refined_theta_path"],
+    #         refined_psi_path=json_dict["refined_psi_path"],
+    #         refined_defocus_path=json_dict["refined_defocus_path"],
+    #     )

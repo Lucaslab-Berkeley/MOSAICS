@@ -4,7 +4,8 @@ import numpy as np
 
 from mosaics.utils import _calculate_pixel_spatial_frequency
 
-# Fit constants from eq. (3) in https://doi.org/10.7554/eLife.06980 for optimal exposure
+# Fit constants from eq. (3) in https://doi.org/10.7554/eLife.06980
+# for optimal exposure
 FIT_CONSTANT_A = 0.245
 FIT_CONSTANT_B = -1.665
 FIT_CONSTANT_C = 2.81
@@ -38,8 +39,8 @@ def calculate_optimal_exposure(
 #     pixel_size: float,
 #     exposure: float,
 # ):
-#     """For an 2D image with a given shape and pixel size (in A), calculate the
-#      filter for a single exposure (in e-/A^2).
+#     """For an 2D image with a given shape and pixel size (in A), calculate
+#     the exposure filter for a single exposure (in e-/A^2).
 
 #     Args:
 #         shape (tuple): The shape of the image to create the exposure filter

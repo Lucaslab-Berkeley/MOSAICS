@@ -1,10 +1,13 @@
-from typing import Literal, Tuple
+from typing import Literal
+from typing import Optional
+from typing import Tuple
 
 import mrcfile
 import numpy as np
 
-from mosaics.data_structures.contrast_transfer_function import \
-    ContrastTransferFunction
+from mosaics.data_structures.contrast_transfer_function import (  # noqa: E501
+    ContrastTransferFunction,
+)
 from mosaics.data_structures.particle_stack import ParticleStack
 from mosaics.utils import get_cropped_region_of_image
 
@@ -20,9 +23,9 @@ class Micrograph:
 
     image_array: np.ndarray
     pixel_size: float  # In Angstroms, assume square pixels
-    image_path: str
+    image_path: Optional[str] = None
 
-    ctf: "ContrastTransferFunction" = None
+    ctf: "ContrastTransferFunction" | None = None
 
     @classmethod
     def from_mrc(cls, mrc_path: str):
@@ -55,7 +58,9 @@ class Micrograph:
         )
 
         if json_dict["ctf"] is not None:
-            micrograph.ctf = ContrastTransferFunction.from_json(json_dict["ctf"])
+            micrograph.ctf = ContrastTransferFunction.from_json(
+                json_dict["ctf"]
+            )
 
         return micrograph
 
@@ -128,7 +133,9 @@ class Micrograph:
             ), "Defocus parameter array must have 3 columns."
 
         if particle_z_scores is not None:
-            assert particle_z_scores.ndim == 1, "Z-score array must be 1-dimensional."
+            assert (
+                particle_z_scores.ndim == 1
+            ), "Z-score array must be 1-dimensional."
 
         if particle_mip_values is not None:
             assert (
@@ -204,6 +211,7 @@ class Micrograph:
 
         # Convert x, y positions to a single numpy array
         particle_positions = np.vstack((positions_x, positions_y)).T
+        ref_paths = [self.image_path] if self.image_path is not None else None
 
         return ParticleStack(
             pixel_size=self.pixel_size,
@@ -214,5 +222,5 @@ class Micrograph:
             particle_defocus_parameters=particle_defocus_parameters,
             particle_z_scores=particle_z_scores,
             particle_mip_values=particle_mip_values,
-            micrograph_reference_paths=[self.image_path],
+            micrograph_reference_paths=ref_paths,
         )

@@ -1,8 +1,8 @@
 import numpy as np
 
-from mosaics.utils import (_calculate_pixel_frequency_angle,
-                           _calculate_pixel_spatial_frequency,
-                           parse_single_ctffind5_result)
+from mosaics.data_structures.utils import parse_single_ctffind5_result
+from mosaics.utils import _calculate_pixel_frequency_angle
+from mosaics.utils import _calculate_pixel_spatial_frequency
 
 
 class ContrastTransferFunction:
@@ -181,7 +181,8 @@ class ContrastTransferFunction:
         delta_Z = 0.5 * (self.defocus_1 + self.defocus_2)
 
         chi = (
-            delta_Z - 0.5 * self.wavelength**2 * self.spherical_aberration * freq_mag2
+            delta_Z
+            - 0.5 * self.wavelength**2 * self.spherical_aberration * freq_mag2
         )  # noqa: E501
         chi *= np.pi * self.wavelength * freq_mag2
         chi += np.arctan(
@@ -193,7 +194,7 @@ class ContrastTransferFunction:
 
         return ctf_arr
 
-    def compute_ctf_2D(self, shape: tuple) -> np.ndarray:
+    def compute_ctf_2D(self, shape: tuple[int, int]) -> np.ndarray:
         """Shape is assumed to be the shape of an image in Fourier space whose
         pixel spacing values are the same as the held pixel size.
         """
@@ -209,7 +210,8 @@ class ContrastTransferFunction:
         delta_Z *= 0.5
 
         chi = (
-            delta_Z - 0.5 * self.wavelength**2 * self.spherical_aberration * freq_mag2
+            delta_Z
+            - 0.5 * self.wavelength**2 * self.spherical_aberration * freq_mag2
         )  # noqa: E501
         chi *= np.pi * self.wavelength * freq_mag2
         chi += np.arctan(

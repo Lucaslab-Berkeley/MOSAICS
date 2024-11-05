@@ -52,16 +52,18 @@ def get_bandpass_filter(
     # return (r >= low_cutoff) * (r <= high_cutoff)
     if low_resolution_decay_rate is not None:
         low_pass = np.exp(
-            -(low_resolution_decay_rate**2) * np.maximum(0, low_cutoff - r)
+            -(low_resolution_decay_rate**2)
+            * np.maximum(0, low_resolution_cutoff - r)
         )
     else:
-        low_pass = r >= low_cutoff
+        low_pass = r >= low_resolution_cutoff
 
     if high_resolution_decay_rate is not None:
         high_pass = np.exp(
-            -(high_resolution_decay_rate**2) * np.maximum(0, r - high_cutoff)
+            -(high_resolution_decay_rate**2)
+            * np.maximum(0, r - high_resolution_cutoff)
         )
     else:
-        high_pass = r <= high_cutoff
+        high_pass = r <= high_resolution_cutoff
 
     return low_pass * high_pass
