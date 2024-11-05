@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 
-def _calculate_pixel_radial_distance(shape: Tuple[int, int]) -> np.ndarray:
+def _calculate_pixel_radial_distance(shape: tuple[int, int]) -> np.ndarray:
     """Helper function for getting a radial distance map for an image with a
     given shape. Position for which the radial distance is calculated is
     assumed at the center of the image.
@@ -20,7 +20,7 @@ def _calculate_pixel_radial_distance(shape: Tuple[int, int]) -> np.ndarray:
 
 
 def _calculate_pixel_spatial_frequency(
-    shape: Tuple[int, int], pixel_size: float
+    shape: tuple[int, int], pixel_size: float
 ) -> np.ndarray:
     """Helper function for getting a spatial frequency map for an image with a
     given shape and pixel size. Position for which the spatial frequency is
@@ -216,7 +216,7 @@ def histogram_2d_linear_interpolation(
 
 def get_cropped_region_of_image(
     image: np.ndarray,
-    box_size: Tuple[int, int],
+    box_size: tuple[int, int],
     positions_x: int,
     positions_y: int,
     positions_reference: Literal["center", "corner"] = "center",

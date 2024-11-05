@@ -1,6 +1,5 @@
 from typing import Literal
 from typing import Optional
-from typing import Tuple
 
 import mrcfile
 import numpy as np
@@ -144,7 +143,7 @@ class Micrograph:
 
     def to_particle_stack(
         self,
-        box_size: Tuple[int, int],
+        box_size: tuple[int, int],
         positions_x: np.ndarray,
         positions_y: np.ndarray,
         positions_reference: Literal["center", "corner"] = "center",

@@ -1,12 +1,10 @@
-from typing import Tuple
-
 import numpy as np
 import scipy as sp
 
 from mosaics.utils import _calculate_pixel_radial_distance
 
 
-def _calculate_num_psd_bins(shape: Tuple[int, int]) -> int:
+def _calculate_num_psd_bins(shape: tuple[int, int]) -> int:
     """Helper function for calculating the default number of bins to use for
     the radial averaging of the power spectral density.
     """
@@ -17,7 +15,7 @@ def _calculate_num_psd_bins(shape: Tuple[int, int]) -> int:
 
 def calculate_radial_sum(
     image, num_bins: int = None, interpolation: str = "linear"
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Given a 2D image, calculate the radial sum of the image with the given
     number of bins and interpolation method. Returns the radial sum values and
     the bin counts.

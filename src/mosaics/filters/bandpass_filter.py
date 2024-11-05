@@ -1,12 +1,10 @@
-from typing import Tuple
-
 import numpy as np
 
 from mosaics.utils import _calculate_pixel_spatial_frequency
 
 
 def get_bandpass_filter(
-    shape: Tuple[int, int],
+    shape: tuple[int, int],
     pixel_size: float,
     low_resolution_cutoff: float = None,
     high_resolution_cutoff: float = None,

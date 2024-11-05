@@ -1,6 +1,5 @@
 from typing import List
 from typing import Optional
-from typing import Tuple
 
 import numpy as np
 
@@ -44,7 +43,7 @@ class ParticleStack:
 
     # TODO: Sort out optional attributes and default values
     pixel_size: float  # in Angstroms
-    box_size: Tuple[int, int]  # in pixels
+    box_size: tuple[int, int]  # in pixels
     particle_images: np.ndarray
     particle_positions: np.ndarray  # in pixels relative to original micrograph
     particle_orientations: np.ndarray  # in degrees (phi, theta, psi)
@@ -58,7 +57,7 @@ class ParticleStack:
         cls,
         out_coordinates_path: str,
         micrograph: "Micrograph",
-        box_size: Tuple[int, int],
+        box_size: tuple[int, int],
         **kwargs,
     ):
         """Create a RefineTemplateResult object from an out_coordinates.txt
@@ -122,7 +121,7 @@ class ParticleStack:
     def __init__(
         self,
         pixel_size: float,
-        box_size: Tuple[int, int],
+        box_size: tuple[int, int],
         particle_images: np.ndarray,
         particle_positions: np.ndarray = None,
         particle_orientations: np.ndarray = None,
