@@ -222,6 +222,26 @@ class ContrastTransferFunction:
         ctf_arr = -np.sin(chi)
 
         return ctf_arr
+    
+    def apply_ctf(self, image: np.ndarray) -> np.ndarray:
+        """Apply the CTF to an image. Assumes the pixel size of the image is
+        the same as the held pixel size.
+        
+        Args:
+            image (np.ndarray): The image to apply the CTF to.
+            
+        Returns:
+            np.ndarray: The image with the CTF applied, in real space.
+        """
+        ctf_2D = self.compute_ctf_2D(image.shape)
+        
+        image_tmp = np.fft.fft2(image)
+        image_tmp = np.fft.fftshift(image_tmp)
+        image_tmp *= ctf_2D
+        image_tmp = np.fft.ifftshift(image_tmp)
+        image_tmp = np.fft.ifft2(image_tmp)
+
+        return image_tmp.real
 
     def to_json(self) -> dict:
         """Convert the ContrastTransferFunction object to a JSON-serializable
