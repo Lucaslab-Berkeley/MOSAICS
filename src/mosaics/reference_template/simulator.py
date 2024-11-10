@@ -1,28 +1,35 @@
-import numpy as np
-from pathlib import Path
-
-from typing import Tuple, Union, Literal
-
 import json
+from pathlib import Path
+from typing import Tuple
 
-# Taken from Table 4.3.2.2. of International Tables for Crystallography Vol. C Third edition (2004)
-SCATTERING_PARAMS_PATH = Path(__file__).parent / "elastic_scattering_factors.json"
+import numpy as np
+
+# Taken from Table 4.3.2.2. of International Tables for Crystallography Vol.
+# C Third edition (2004)
+SCATTERING_PARAMS_PATH = (
+    Path(__file__).parent / "elastic_scattering_factors.json"
+)
 
 with open(SCATTERING_PARAMS_PATH, "r") as f:
     data = json.load(f)
 
-SCATTERING_PARAMETERS_A = {k: v for k, v in data["parameters_a"].items() if v != []}
-SCATTERING_PARAMETERS_B = {k: v for k, v in data["parameters_b"].items() if v != []}
+SCATTERING_PARAMETERS_A = {
+    k: v for k, v in data["parameters_a"].items() if v != []
+}
+SCATTERING_PARAMETERS_B = {
+    k: v for k, v in data["parameters_b"].items() if v != []
+}
 SCATTERING_COEFFICIENT = 4.787764736e-19  # h^2 / (2pi m_0 e)
 
 
 def _scattering_potential_single_atom_3d(
-    pos: Tuple[np.ndarray, np.ndarray, np.ndarray],  # From meshgrid
+    pos: list[np.ndarray],  # From meshgrid, should be 3 elements
     atom_id: str,
     b_factor: float,
 ):
-    r"""Calculate the scattering potential around some pixels in 3D space according to
-    equation 10 in https://journals.iucr.org/m/issues/2021/06/00/rq5007/index.html.
+    r"""Calculate the scattering potential around some pixels in 3D space
+    according to equation 10 in
+    https://journals.iucr.org/m/issues/2021/06/00/rq5007/index.html.
 
     TODO: Finish docstring
 
@@ -30,9 +37,6 @@ def _scattering_potential_single_atom_3d(
 
     """
     x, y, z = pos
-    dx = x[1] - x[0]
-    dy = y[1] - y[0]
-    dz = z[1] - z[0]
 
     amp = np.zeros((x.shape))
 
@@ -51,25 +55,27 @@ def _scattering_potential_single_atom_3d(
 
 
 def _scattering_potential_single_atom_2d(
-    pos: Tuple[np.ndarray, np.ndarray],  # From meshgrid
+    pos: list[np.ndarray],  # From meshgrid, should be 2 elements
     atom_id: str,
     b_factor: float,
 ):
-    r"""Calculate the scattering potential around some pixels in 2D space according to
-    equation 10 in https://journals.iucr.org/m/issues/2021/06/00/rq5007/index.html,
-    integrated over the z (projection) axis.
+    r"""Calculate the scattering potential around some pixels in 2D space
+    according to equation 10 in
+    https://journals.iucr.org/m/issues/2021/06/00/rq5007/index.html, integrated
+    over the z (projection) axis.
 
     .. math::
-        \rho(x, y) = \dfrac{h^2}{2\pi m_0 e} \sum_{i=1}^{5} a_i \left(\dfrac{4\pi}{b_i + B_n}\right) \exp\left(\dfrac{-4\pi^2 (x^2 + y^2)}{b_i + B_n}\right)
+        \rho(x, y) = \dfrac{h^2}{2\pi m_0 e}
+            \sum_{i=1}^{5} a_i \left(\dfrac{4\pi}{b_i + B_n}\right)
+            \exp\left(\dfrac{-4\pi^2 (x^2 + y^2)}{b_i + B_n}\right)
 
-    where :math:`B_n` is the B-factor, :math:`a_i` and :math:`b_i` are fit parameters for
-    the 5 Gaussians that approximate the scattering potential of the atom.
+    where :math:`B_n` is the B-factor, :math:`a_i` and :math:`b_i` are fit
+    parameters for the 5 Gaussian terms that approximate the scattering
+    potential of the atom.
 
     TODO: Finish docstring
     """
     x, y = pos
-    dx = x[1] - x[0]
-    dy = y[1] - y[0]
 
     amp = np.zeros((x.shape))
 
@@ -93,10 +99,11 @@ def calculate_scattering_potential_2d(
     atom_ids: np.ndarray,
     b_factors: np.ndarray,
     bins: Tuple[np.ndarray, np.ndarray],  # coordinates in Angstroms
-    alpha: float = 0.01,
+    # alpha: float = 0.01,
 ):
     """TODO: docstring"""
-    cutoff_pixels = 12  # TODO: Calculate based on maximum B-factor and pixel size
+    # TODO: Calculate based on maximum B-factor and pixel size
+    cutoff_pixels = 12
 
     shape = (bins[0].size, bins[1].size)
 
@@ -106,8 +113,16 @@ def calculate_scattering_potential_2d(
     pos = np.meshgrid(pos0, pos1)
 
     # Transform x and y to pixel-like coordinates
-    x = (x - bins[0].min()) / (bins[0].max() - bins[0].min()) * (bins[0].size - 1)
-    y = (y - bins[1].min()) / (bins[1].max() - bins[1].min()) * (bins[1].size - 1)
+    x = (
+        (x - bins[0].min())
+        / (bins[0].max() - bins[0].min())
+        * (bins[0].size - 1)
+    )
+    y = (
+        (y - bins[1].min())
+        / (bins[1].max() - bins[1].min())
+        * (bins[1].size - 1)
+    )
 
     # Calculate the scattering potential for each atom
     histogram = np.zeros(shape)
@@ -120,14 +135,19 @@ def calculate_scattering_potential_2d(
         dy = y[i] - y_int
         tmp_pos = [pos[0] - dx, pos[1] - dy]
 
-        # Determine which pixel positions to calculate at and where to add the density
+        # Determine which pixel positions to calculate at and where to add the
+        # density
         kernel_window = np.s_[
-            max(x_int - cutoff_pixels, 0) : min(x_int + cutoff_pixels + 1, shape[0]),
-            max(y_int - cutoff_pixels, 0) : min(y_int + cutoff_pixels + 1, shape[1]),
+            max(x_int - cutoff_pixels, 0) : min(
+                x_int + cutoff_pixels + 1, shape[0]
+            ),
+            max(y_int - cutoff_pixels, 0) : min(
+                y_int + cutoff_pixels + 1, shape[1]
+            ),
         ]
 
-        # TODO: Clean up this indexing to accelerate computation. Necessary for when
-        # an atom may be close to the edge of the grid.
+        # TODO: Clean up this indexing to accelerate computation. Necessary for
+        # when an atom may be close to the edge of the grid.
         tmp_pos[0] = tmp_pos[0][
             cutoff_pixels
             - min(x_int, cutoff_pixels) : cutoff_pixels
@@ -158,17 +178,20 @@ def calculate_scattering_potential_2d(
     return histogram
 
 
-def calcualte_scattering_potential_3d(
+def calculate_scattering_potential_3d(
     x: np.ndarray,  # in Angstroms
     y: np.ndarray,  # in Angstroms
     z: np.ndarray,  # in Angstroms
     atom_ids: np.ndarray,
     b_factors: np.ndarray,
-    bins: Tuple[np.ndarray, np.ndarray, np.ndarray],  # coordinates in Angstroms
-    alpha: float = 0.01,
+    bins: Tuple[
+        np.ndarray, np.ndarray, np.ndarray
+    ],  # coordinates in Angstroms
+    # alpha: float = 0.01,
 ) -> np.ndarray:
     """TODO: docstring"""
-    cutoff_pixels = 16  # TODO: Calculate based on maximum B-factor and pixel size
+    # TODO: Calculate based on maximum B-factor and pixel size
+    cutoff_pixels = 16
 
     shape = (bins[0].size, bins[1].size, bins[2].size)
 
@@ -179,9 +202,21 @@ def calcualte_scattering_potential_3d(
     pos = np.meshgrid(pos0, pos1, pos2)
 
     # Transform x, y, and z to pixel-like coordinates
-    x = (x - bins[0].min()) / (bins[0].max() - bins[0].min()) * (bins[0].size - 1)
-    y = (y - bins[1].min()) / (bins[1].max() - bins[1].min()) * (bins[1].size - 1)
-    z = (z - bins[2].min()) / (bins[2].max() - bins[2].min()) * (bins[2].size - 1)
+    x = (
+        (x - bins[0].min())
+        / (bins[0].max() - bins[0].min())
+        * (bins[0].size - 1)
+    )
+    y = (
+        (y - bins[1].min())
+        / (bins[1].max() - bins[1].min())
+        * (bins[1].size - 1)
+    )
+    z = (
+        (z - bins[2].min())
+        / (bins[2].max() - bins[2].min())
+        * (bins[2].size - 1)
+    )
 
     histogram = np.zeros(shape)
     for i in range(len(atom_ids)):
@@ -195,12 +230,19 @@ def calcualte_scattering_potential_3d(
         dz = z[i] - z_int
         tmp_pos = [pos[0] - dx, pos[1] - dy, pos[2] - dz]
 
-        # Determine which voxel positions to calculate at and where to add the density
+        # Determine which voxel positions to calculate at and where to add the
+        # density
         # TODO: Clean up this indexing to accelerate
         kernel_window = np.s_[
-            max(x_int - cutoff_pixels, 0) : min(x_int + cutoff_pixels + 1, shape[0]),
-            max(y_int - cutoff_pixels, 0) : min(y_int + cutoff_pixels + 1, shape[1]),
-            max(z_int - cutoff_pixels, 0) : min(z_int + cutoff_pixels + 1, shape[2]),
+            max(x_int - cutoff_pixels, 0) : min(
+                x_int + cutoff_pixels + 1, shape[0]
+            ),
+            max(y_int - cutoff_pixels, 0) : min(
+                y_int + cutoff_pixels + 1, shape[1]
+            ),
+            max(z_int - cutoff_pixels, 0) : min(
+                z_int + cutoff_pixels + 1, shape[2]
+            ),
         ]
 
         tmp_pos[0] = tmp_pos[0][

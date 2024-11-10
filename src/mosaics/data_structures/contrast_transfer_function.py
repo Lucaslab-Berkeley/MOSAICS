@@ -1,15 +1,14 @@
 import numpy as np
 
-from mosaics.utils import _calculate_pixel_spatial_frequency
+from mosaics.data_structures.utils import parse_single_ctffind5_result
 from mosaics.utils import _calculate_pixel_frequency_angle
-
-from typing import Dict
+from mosaics.utils import _calculate_pixel_spatial_frequency
 
 
 class ContrastTransferFunction:
-    r"""Custom class for defining parameters of the contrast transfer function (CTF).
-    Note that some of the attributes of the class have associated units, but these units
-    are not explicitly enforced.
+    r"""Custom class for defining parameters of the contrast transfer function
+    (CTF). Note that some of the attributes of the class have associated units,
+    but these units are not explicitly enforced.
 
     The implemented contrast transfer function follows the definition in
     https://doi.org/10.1016/j.jsb.2015.08.008 can be expressed as:
@@ -22,23 +21,25 @@ class ContrastTransferFunction:
                 \right)
         \end{equation}
 
-    where $\lambda$ is the relativistic electron wavelength, \mathbf{g} is the spatial
-    frequency, $\Delta f$ is the defocus, $C_s$ is the spherical aberration,
+    where $\lambda$ is the relativistic electron wavelength, \mathbf{g} is the
+    spatial frequency, $\Delta f$ is the defocus, $C_s$ is the spherical
+    aberration,
     $\Delta \phi$
-    is an additional phase shift term, and $w_2$ is the amplitude contrast ratio.
+    is an additional phase shift term, and $w_2$ is the amplitude contrast
+    ratio.
 
     The function $\xi$ is defined as:
 
     .. math::
         \begin{equation}
-            \xi(\lambda, \mathbf{g}, C_s, \Delta f, \Delta \phi, w_2) =
-                \pi \lambda \lvert \mathbf{g} \rvert^2 \left[
-                    \Delta f - \dfrac{1}{2} \lambda^2 C_s \lvert \mathbf{g} \rvert^2
-                \right] + \Delta \phi + \arctan\left(w_2 / \sqrt{1 - w_2^2}\right)
+        \xi(\lambda, \mathbf{g}, C_s, \Delta f, \Delta \phi, w_2) =
+            \pi \lambda \lvert \mathbf{g} \rvert^2 \left[
+            \Delta f - \dfrac{1}{2} \lambda^2 C_s \lvert \mathbf{g} \rvert^2
+            \right] + \Delta \phi + \arctan\left(w_2 / \sqrt{1 - w_2^2}\right)
         \end{equation}
 
-    There is an additional envelope function that accounts for the overall decay of
-    spatial frequency information parameterized here as:
+    There is an additional envelope function that accounts for the overall
+    decay of spatial frequency information parameterized here as:
 
     .. math::
         \begin{equation}
@@ -52,7 +53,8 @@ class ContrastTransferFunction:
 
         voltage (float): The voltage of the electron beam in kV.
         wavelength (float): The wavelength of the electron beam in Angstroms.
-        spherical_aberration (float): The spherical aberration of the microscope in mm.
+        spherical_aberration (float): The spherical aberration of the
+            microscope in mm.
         z_1 (float): The defocus value along the first axis in Angstroms.
         z_2 (float): The defocus value along the second axis in Angstroms.
         astigmatism_azimuth (float): The astigmatism angle in radians.
@@ -63,8 +65,9 @@ class ContrastTransferFunction:
     Methods:
     --------
 
-        compute_ctf(shape: tuple) -> np.ndarray: Compute the contrast transfer function
-            with the held CTF parameters for a grid of the given shape.
+        compute_ctf(shape: tuple) -> np.ndarray: Compute the contrast transfer
+            function with the held CTF parameters for a grid of the given
+            shape.
     """
 
     voltage: float  # in kV
@@ -86,8 +89,8 @@ class ContrastTransferFunction:
         pixel_size: float,
         B_factor: float = 0.0,
     ) -> "ContrastTransferFunction":
-        """Parse a CTFFIND5 fit output file and create a ContrastTransferFunction
-        object from the fit parameters.
+        """Parse a CTFFIND5 fit output file and create a
+        ContrastTransferFunction object from the fit parameters.
         """
         fit_params = parse_single_ctffind5_result(ctffind5_output)
 
@@ -127,17 +130,17 @@ class ContrastTransferFunction:
         self.B_factor = B_factor
 
     def _wavelength_from_voltage(self, voltage: float) -> float:
-        r"""Convert from electron voltage to wavelength accounting for relativistic
-        effects. Calculated according to
+        r"""Convert from electron voltage to wavelength accounting for
+        relativistic effects. Calculated according to
 
         .. math::
             \begin{equation}
                 \lambda = \dfrac{h}{\sqrt{2m_e e V}}
             \end{equation}
 
-        with :math:`h` as Planck's constant, :math:`m_e` as the electron mass, :math:`e`
-        as the elementary charge, and :math:`V` as the voltage. The reletivistic effects
-        are accounted for by an additional factor of
+        with :math:`h` as Planck's constant, :math:`m_e` as the electron mass,
+        :math:`e` as the elementary charge, and :math:`V` as the voltage. The
+        relativistic effects are accounted for by an additional factor of
 
         .. math::
             \begin{equation}
@@ -159,8 +162,8 @@ class ContrastTransferFunction:
         return 12.2639 / wavelength
 
     def _compute_envelope_function(self, freq_mag: float) -> float:
-        """Computes the envelope function for the given absolute frequency using the
-        held CTF parameters.
+        """Computes the envelope function for the given absolute frequency
+        using the held CTF parameters.
 
         Parameters:
             freq_mag (float): The magnitude of the spatial frequency component.
@@ -177,7 +180,10 @@ class ContrastTransferFunction:
 
         delta_Z = 0.5 * (self.defocus_1 + self.defocus_2)
 
-        chi = delta_Z - 0.5 * self.wavelength**2 * self.spherical_aberration * freq_mag2
+        chi = (
+            delta_Z
+            - 0.5 * self.wavelength**2 * self.spherical_aberration * freq_mag2
+        )  # noqa: E501
         chi *= np.pi * self.wavelength * freq_mag2
         chi += np.arctan(
             self.amplitude_contrast_ratio
@@ -188,9 +194,9 @@ class ContrastTransferFunction:
 
         return ctf_arr
 
-    def compute_ctf_2D(self, shape: tuple) -> np.ndarray:
-        """Shape is assumed to be the shape of an image in Fourier space whose pixel
-        spacing values are the same as the held pixel size.
+    def compute_ctf_2D(self, shape: tuple[int, int]) -> np.ndarray:
+        """Shape is assumed to be the shape of an image in Fourier space whose
+        pixel spacing values are the same as the held pixel size.
         """
         freq_mag = _calculate_pixel_spatial_frequency(shape, self.pixel_size)
         freq_arg = _calculate_pixel_frequency_angle(shape, self.pixel_size)
@@ -203,7 +209,10 @@ class ContrastTransferFunction:
         )
         delta_Z *= 0.5
 
-        chi = delta_Z - 0.5 * self.wavelength**2 * self.spherical_aberration * freq_mag2
+        chi = (
+            delta_Z
+            - 0.5 * self.wavelength**2 * self.spherical_aberration * freq_mag2
+        )  # noqa: E501
         chi *= np.pi * self.wavelength * freq_mag2
         chi += np.arctan(
             self.amplitude_contrast_ratio
@@ -235,7 +244,9 @@ class ContrastTransferFunction:
         return image_tmp.real
 
     def to_json(self) -> dict:
-        """Convert the ContrastTransferFunction object to a JSON-serializable dictionary."""
+        """Convert the ContrastTransferFunction object to a JSON-serializable
+        dictionary.
+        """
         return {
             "voltage": self.voltage,
             "spherical_aberration": self.spherical_aberration

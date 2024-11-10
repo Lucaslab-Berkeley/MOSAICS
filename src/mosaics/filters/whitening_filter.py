@@ -216,7 +216,9 @@ def compute_power_spectral_density_1D(
 
     # Figure out the frequency values associated with the bins
     num_bins = power_spectral_density.size
-    max_freq = np.sqrt(image.shape[0] ** 2 + image.shape[1] ** 2) / 2  # corner pixel
+    max_freq = (
+        np.sqrt(image.shape[0] ** 2 + image.shape[1] ** 2) / 2
+    )  # corner pixel
     frequency_values = np.linspace(0, max_freq, num_bins) / pixel_size
 
     return power_spectral_density, frequency_values
@@ -226,7 +228,7 @@ def compute_power_spectral_density_2D(
     image, pixel_size: float = 1, **kwargs
 ):
     """Calculates the power spectral density but maps back the spectral density
-        into 2D space using linear interpolation.
+    into 2D space using linear interpolation.
     
     TODO: Docstring
     """
@@ -252,9 +254,9 @@ def compute_power_spectral_density_2D(
         bounds_error=True,
         fill_value=1e-10,
     )
-    
+
     psd_image = psd_image.reshape(image.shape)
-    
+
     return psd_image
 
 
@@ -269,7 +271,7 @@ def get_whitening_filter(
     )
 
     whitening_filter = 1 / power_spectrum_2D
-    
+
     return whitening_filter
 
 
@@ -279,7 +281,7 @@ def apply_whitening_filter(
     **kwargs,
 ) -> np.ndarray:
     """Apply a whitening filter to an image.
-    
+
     TODO: Docstring
     """
     whitening_filter = get_whitening_filter(
@@ -287,14 +289,14 @@ def apply_whitening_filter(
         pixel_size=pixel_size,
         **kwargs,
     )
-    
+
     # Apply the whitening filter in Fourier space
     image = np.fft.fft2(image)
     image = np.fft.fftshift(image)
-    
+
     image *= whitening_filter
-    
+
     image = np.fft.ifftshift(image)
     image = np.fft.ifft2(image)
-    
+
     return np.real(image)
