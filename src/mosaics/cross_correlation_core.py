@@ -57,26 +57,40 @@ def cross_correlate_from_fft(
 
 
 def cross_correlate(
-    image: np.ndarray, template: np.ndarray, mode: Literal["valid", "full"] = "valid"
+    image: np.ndarray,
+    template: np.ndarray,
+    mode: Literal["valid", "full"] = "valid",
 ) -> np.ndarray:
-    """Cross-correlates an image and template which are provided in real space. The
-    result is the cross-correlation of the two images.
+    """Cross-correlates an image and template which are provided in real space.
+    The result is the cross-correlation of the two images.
 
     Args:
         image (np.ndarray): The image.
         template (np.ndarray): The template.
-        mode (Literal["valid", "full"]): The mode of the cross-correlation. Default is
-            'valid'.
+        mode (Literal["valid", "full"]): The mode of the cross-correlation.
+            Default is 'valid'.
 
     Returns:
         np.ndarray: The cross-correlation result.
     """
+    out_shape = np.array(image.shape) - np.array(template.shape) + 1
+
+    # FFT pad and cross-correlate in Fourier space
+    template_fft = np.fft.fftn(template, s=image.shape)
     image_fft = np.fft.fftn(image)
-    image_fft = np.fft.fftshift(image_fft)
-    template_fft = np.fft.fftn(template)
-    template_fft = np.fft.fftshift(template_fft)
 
-    return cross_correlate_from_fft(image_fft, template_fft, mode)
+    cross_correlation = image_fft * np.conj(template_fft)
+    # cross_correlation = np.fft.ifftshift(cross_correlation)
+    cross_correlation = np.fft.ifftn(cross_correlation)
 
+    # Crop the result to the valid bounds
+    if mode == "valid":
+        cross_correlation = cross_correlation[: out_shape[0], : out_shape[1]]
+    elif mode == "full":
+        pass
+    else:
+        raise ValueError(f"Invalid mode: {mode}")
+
+    return cross_correlation
 
 # TODO: Normalized cross-correlation
