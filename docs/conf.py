@@ -17,8 +17,8 @@ extensions = [
     "myst_nb",
 ]
 source_suffix = {
-    ".rst": "restructuredtext",
-    ".md": "markdown",
+    ".rst": "myst-nb",
+    ".md": "myst-nb",
     ".ipynb": "myst-nb",
     ".myst": "myst-nb",
 }
@@ -32,3 +32,4 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 html_theme = "alabaster"
 html_static_path = ["_static"]
+html_css_files = ["custom.css"]
