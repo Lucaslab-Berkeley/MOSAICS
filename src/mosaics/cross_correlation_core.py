@@ -96,4 +96,5 @@ def cross_correlate(
 
     return cross_correlation
 
+
 # TODO: Normalized cross-correlation

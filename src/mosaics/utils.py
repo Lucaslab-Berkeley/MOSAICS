@@ -1,5 +1,4 @@
 from typing import Literal
-from typing import Tuple
 from typing import Union
 
 import numpy as np
@@ -37,7 +36,7 @@ def _calculate_pixel_spatial_frequency(
 
 
 def _calculate_pixel_frequency_angle(
-    shape: Tuple[int, int], pixel_size: float
+    shape: tuple[int, int], pixel_size: float
 ) -> np.ndarray:
     """TODO: Docstring"""
     x = np.fft.fftfreq(shape[1], d=pixel_size)
@@ -76,7 +75,7 @@ def histogram_2d_gaussian_interpolation(
     x: np.ndarray,
     y: np.ndarray,
     sigma: Union[float, np.ndarray],
-    bins: Tuple[np.ndarray, np.ndarray],
+    bins: tuple[np.ndarray, np.ndarray],
     weights: np.ndarray = None,
     # density: bool = False,
     alpha: float = 0.01,
@@ -94,7 +93,7 @@ def histogram_2d_gaussian_interpolation(
         (float) sigma: Standard deviation of the Gaussian kernel, in units of
             pixels.
         (float) alpha: Relative cutoff value for the Gaussian kernel.
-        (Tuple[int, int]) shape: Shape of the output image.
+        (tuple[int, int]) shape: Shape of the output image.
 
     Returns:
     """
@@ -155,12 +154,12 @@ def histogram_2d_gaussian_interpolation(
 
 
 # def histogram_2d_linear_interpolation(
-#     points: np.ndarray, shape: Tuple[int, int]
+#     points: np.ndarray, shape: tuple[int, int]
 # ) -> np.ndarray:
 def histogram_2d_linear_interpolation(
     x: np.ndarray,
     y: np.ndarray,
-    bins: Tuple[np.ndarray, np.ndarray],
+    bins: tuple[np.ndarray, np.ndarray],
     # density: bool = False,
     weights: np.ndarray = None,
 ) -> np.ndarray:
@@ -170,7 +169,7 @@ def histogram_2d_linear_interpolation(
 
     Parameters:
         (np.ndarray) points: Array of 2D points with associated values.
-        (Tuple[int, int]) shape: Shape of the output image.
+        (tuple[int, int]) shape: Shape of the output image.
 
     Returns: TODO
     """

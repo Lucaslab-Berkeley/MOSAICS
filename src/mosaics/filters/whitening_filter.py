@@ -4,101 +4,6 @@ import scipy as sp
 from mosaics.utils import _calculate_pixel_radial_distance
 
 
-class WhiteningFilter:
-    """Helper class for holding a reference to a power spectral density and
-    calculating the associated whitening filter for images.
-    
-    TODO: Functionality whitening images with different pixel sizes
-    
-    Attributes:
-    ----------
-    pixel_size (float): The pixel size associated with the filter.
-    power_spectral_density (np.ndarray): 1-dimensional array of the power
-        spectral density of the image.
-    frequency_values (np.ndarray): 1-dimensional array of the frequency values
-        (in inverse pixels) associated with the power spectral density.
-        
-    Methods:
-    -------
-    get_whitening_filter_2D(shape: tuple[int, int]) -> np.ndarray:
-        Get the whitening filter for a 2D image of a given shape using the held
-        power spectral density.
-    apply_whitening_filter_2D(image: np.ndarray) -> np.ndarray:
-        Apply the whitening filter to a 2D image.
-    """
-    
-    pixel_size: float
-    power_spectral_density: np.ndarray  # 1-dimensional
-    frequency_values: np.ndarray
-    
-    def __init__(self, image: np.ndarray, pixel_size: float):
-        """Initialize the whitening filter.
-        """
-        self.pixel_size = pixel_size
-        
-        tmp = compute_power_spectral_density_1D(image, self.pixel_size)
-        self.power_spectral_density = tmp[0]
-        self.frequency_values = tmp[1]
-        
-    def get_whitening_filter_2D(self, shape: tuple[int, int]) -> np.ndarray:
-        """Get the whitening filter for a 2D image of a given shape. Assumes
-        the same pixel size is used for the 2D image as was used to initialize
-        the whitening filter.
-        
-        Args:
-            shape (tuple[int, int]): The shape of the 2D image to get the
-                whitening filter for.
-        """
-        # NOTE: There should be a warning included for when the requested shape
-        # is much larger than the original PSD (interpolated results may not
-        # be accurate)
-        
-        r = _calculate_pixel_radial_distance(shape)
-        r = r.flatten()
-
-        # Use linear interpolation to map the PSD onto the frequency grid
-        psd_image = sp.interpolate.interpn(
-            points=[np.arange(self.power_spectral_density.size)],
-            values=self.power_spectral_density,
-            xi=r,
-            method="linear",
-            bounds_error=False,
-            fill_value=1e-10,
-        )
-        
-        psd_image = psd_image.reshape(shape)
-        psd_image[psd_image == 0] = 1e-10  # Avoid division by zero
-        
-        # Invert the PSD to get the whitening filter
-        whitening_filter = 1 / psd_image
-        
-        return whitening_filter
-    
-    def apply_whitening_filter_2D(self, image: np.ndarray) -> np.ndarray:
-        """Apply the whitening filter to a 2D image. Assumes the same pixel
-        size is used for the 2D image as was used to initialize the whitening
-        filter.
-        
-        Args:
-            image (np.ndarray): The 2D image to apply the whitening filter to.
-            
-        Returns:
-            np.ndarray: The whitened 2D image. Return value will be complex.
-        """
-        whitening_filter = self.get_whitening_filter_2D(image.shape)
-        
-        # Apply the whitening filter in Fourier space
-        image = np.fft.fft2(image)
-        image = np.fft.fftshift(image)
-        
-        image *= whitening_filter
-        
-        image = np.fft.ifftshift(image)
-        image = np.fft.ifft2(image)
-        
-        return image
-
-
 def _calculate_num_psd_bins(shape: tuple[int, int]) -> int:
     """Helper function for calculating the default number of bins to use for
     the radial averaging of the power spectral density.
@@ -127,7 +32,7 @@ def calculate_radial_sum(
             radial sum. Currently supported options are "linear" and "nearest".
     """
     assert array.ndim == 2, "Array must be 2D"
-    
+
     # Set the number of bins if not provided
     if num_bins is None:
         num_bins = _calculate_num_psd_bins(array.shape)
@@ -186,7 +91,7 @@ def calculate_radial_sum(
 
 def compute_power_spectral_density_1D(
     image,
-    pixel_size: float = 1,
+    pixel_size: float = 1.0,
     **kwargs,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Given a 2D image, compute the 1D power spectral density of the image.
@@ -195,6 +100,7 @@ def compute_power_spectral_density_1D(
 
     Args:
         image (np.ndarray): 2D image to calculate the power spectral density of
+        pixel_size (float): The pixel size of the image in Angstroms.
         num_bins (int): Number of bins to use for the radial sum. If None, the
             number of bins is automatically calculated based on the image
             dimensions.
@@ -226,12 +132,14 @@ def compute_power_spectral_density_1D(
 
 def compute_power_spectral_density_2D(
     image, pixel_size: float = 1, **kwargs
-):
+) -> np.ndarray:
     """Calculates the power spectral density but maps back the spectral density
     into 2D space using linear interpolation.
-    
+
     TODO: Docstring
     """
+    _ = pixel_size
+
     image = np.fft.fft2(image)
     image = np.fft.fftshift(image)
 
@@ -260,9 +168,7 @@ def compute_power_spectral_density_2D(
     return psd_image
 
 
-def get_whitening_filter(
-    image, pixel_size: float = 1, **kwargs
-) -> np.ndarray:
+def get_whitening_filter(image, pixel_size: float = 1, **kwargs) -> np.ndarray:
     """TODO: Docstring"""
     power_spectrum_2D = compute_power_spectral_density_2D(
         image=image,

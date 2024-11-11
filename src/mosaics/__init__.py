@@ -14,6 +14,6 @@ class MosaicsManager:
 
     """
 
-    micrograph: Micrograph
-    particle_stack: ParticleStack
-    ctf: ContrastTransferFunction
+    micrograph: "Micrograph"
+    particle_stack: "ParticleStack"
+    ctf: "ContrastTransferFunction"
