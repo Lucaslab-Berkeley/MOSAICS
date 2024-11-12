@@ -57,7 +57,7 @@ Cropped particle views are extracted from their original micrograph(s) and place
 There are multiple ways to create a `ParticleStack` object, the most common being either from a micrograph plus an *cis*TEM `out_coordinates.txt` file or from a `.star` and `.mrcs` file.
 Examples of these can be seen in the examples gallery (TODO: link).
 
-Currently, MOSAICS uses a custom `.star` file format to load in / export a particle stack detailed below:
+<!-- Currently, MOSAICS uses a custom `.star` file format to load in / export a particle stack detailed below:
 
 ```
 data_particle_stack_attributes
@@ -95,7 +95,7 @@ _mosaicsMicrographPSDPath #13
 3	1	150	160	120.0	45.9	32.7	5200.0	4900.0	22.2	/example/path/stack1.mrcs	/example/path/micrograph1.mrc	/example/path/micrograph1_psd.txt
 ```
 
-*Note: The particle index column refers to the image index in the .mrcs file. This allows multiple stacks to be combined, but there is no checking to ensure particles and files are properly ordered*
+*Note: The particle index column refers to the image index in the .mrcs file. This allows multiple stacks to be combined, but there is no checking to ensure particles and files are properly ordered* -->
 
 
 ## Reference structures

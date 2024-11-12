@@ -17,6 +17,7 @@ Further installation instructions (for users and developers) will be added here 
 ```{toctree}
 :caption: Usage Guide
 objects.md
+star_convention.md
 ```
 
 
