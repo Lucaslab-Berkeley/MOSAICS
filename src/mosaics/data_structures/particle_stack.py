@@ -1,6 +1,7 @@
+import os
 from typing import Optional
 
-import mrcfile
+# import mrcfile
 import numpy as np
 import pandas as pd
 import starfile
@@ -8,21 +9,305 @@ import starfile
 from mosaics.data_structures.micrograph import Micrograph
 from mosaics.utils import parse_out_coordinates_result
 
-STAR_COLUMNS = [
-    "ParticleIndex",
-    "ImageStackPath",
-    "ParticleClass",
-    "PixelCoordinateX",
-    "PixelCoordinateY",
-    "OrientationPhi",
-    "OrientationTheta",
-    "OrientationPsi",
-    "Defocus1",
-    "Defocus2",
-    "DefocusAngle",
-    "MicrographPath",
-    "MicrographPSDPath",
-]
+# from mosaics.utils import get_cropped_region_of_image
+
+
+class OpticsGroups:
+    """Class to store information related to microscope optics and image
+    processing parameters necessary for constructing filters for each member
+    of a ParticleStack in MOSAICS. An instance of the OpticsGroups class is
+    indexable by both the optics group name and number which returns a
+    dictionary for the corresponding optics group.
+
+    Attributes:
+    -----------
+
+        optics_group_name (list[str]): List of names for each optics group.
+        optics_group_number (list[int]): List of unique integers for each
+            optics group.
+        micrograph_original_pixel_size (list[float]): List of pixel sizes for
+            the micrographs, in Angstroms.
+        micrograph_original_shape_x (list[int]): List of the original size
+            of the micrographs in the x-dimension.
+        micrograph_original_shape_y (list[int]): List of the original size
+            of the micrographs in the y-dimension.
+        micrograph_psd_reference (list[str]): List of paths to pre-calculated
+            power spectral density (PSD) files for the micrographs.
+        voltage (list[float]): List of the voltage of the microscope in kV.
+        spherical_aberration (list[float]): List of the spherical aberration
+            of the microscope optics in mm.
+        amplitude_contrast_ratio (list[float]): List of the amplitude contrast
+            of the microscope optics.
+        additional_phase_shift (list[float]): List of additional phase shifts
+            applied to the images.
+        defocus_1 (list[float]): Major defocus value for images (in Angstroms).
+        defocus_2 (list[float]): Minor defocus value for images (in Angstroms).
+        astigmatism_azimuth (list[float]): Defocus Astigmatism angle for images
+        image_pixel_size (list[float]): List of pixel sizes for the images
+            stacks, in Angstroms.
+        image_shape_x (list[int]): List of the size of the image stacks in
+            the x-dimension.
+        image_shape_y (list[int]): List of the size of the image stacks in
+            the y-dimension.
+        image_shape_z (list[int]): List of the size of the image stacks in
+            the z-dimension (number of particles).
+        image_dimensionality (list[int]): List of the dimensionality of the
+            image stacks. Usually 3.
+
+    """
+
+    optics_group_name: list[str]
+    optics_group_number: list[int]
+    micrograph_original_pixel_size: list[float]
+    micrograph_original_shape_x: list[int]
+    micrograph_original_shape_y: list[int]
+    micrograph_psd_reference: list[str]
+    voltage: list[float]
+    spherical_aberration: list[float]
+    amplitude_contrast_ratio: list[float]
+    additional_phase_shift: list[float]
+    defocus_1: list[float]
+    defocus_2: list[float]
+    astigmatism_azimuth: list[float]
+    image_pixel_size: list[float]
+    image_shape_x: list[int]
+    image_shape_y: list[int]
+    image_shape_z: list[int]
+    image_dimensionality: list[int]
+
+    @classmethod
+    def from_df(cls, df: pd.DataFrame):
+        """Instantiate a new OpticsGroups object from a DataFrame, likely
+        parsed from a star file.
+
+        """
+        optics_group_name = df["mosaicsOpticsGroupName"].values
+        optics_group_number = df["mosaicsOpticsGroupNumber"].values
+        micrograph_original_pixel_size = df[
+            "mosaicsMicrographOriginalPixelSize"
+        ].values
+        micrograph_original_shape_x = df[
+            "mosaicsMicrographOriginalShapeX"
+        ].values
+        micrograph_original_shape_y = df[
+            "mosaicsMicrographOriginalShapeY"
+        ].values
+        micrograph_psd_reference = df["mosaicsMicrographPSDReference"].values
+        voltage = df["mosaicsVoltage"].values
+        spherical_aberration = df["mosaicsSphericalAberration"].values
+        amplitude_contrast_ratio = df["mosaicsAmplitudeContrastRatio"].values
+        additional_phase_shift = df["mosaicsAdditionalPhaseShift"].values
+        defocus_1 = df["mosaicsDefocus1"].values
+        defocus_2 = df["mosaicsDefocus2"].values
+        astigmatism_azimuth = df["mosaicsAstigmatismAzimuth"].values
+        image_pixel_size = df["mosaicsImagePixelSize"].values
+        image_shape_x = df["mosaicsImageShapeX"].values
+        image_shape_y = df["mosaicsImageShapeY"].values
+        image_shape_z = df["mosaicsImageShapeZ"].values
+        image_dimensionality = df["mosaicsImageDimensionality"].values
+
+        return cls(
+            optics_group_name=optics_group_name,
+            optics_group_number=optics_group_number,
+            micrograph_original_pixel_size=micrograph_original_pixel_size,
+            micrograph_original_shape_x=micrograph_original_shape_x,
+            micrograph_original_shape_y=micrograph_original_shape_y,
+            micrograph_psd_reference=micrograph_psd_reference,
+            voltage=voltage,
+            spherical_aberration=spherical_aberration,
+            amplitude_contrast_ratio=amplitude_contrast_ratio,
+            additional_phase_shift=additional_phase_shift,
+            defocus_1=defocus_1,
+            defocus_2=defocus_2,
+            astigmatism_azimuth=astigmatism_azimuth,
+            image_pixel_size=image_pixel_size,
+            image_shape_x=image_shape_x,
+            image_shape_y=image_shape_y,
+            image_shape_z=image_shape_z,
+            image_dimensionality=image_dimensionality,
+        )
+
+    def to_df(self) -> pd.DataFrame:
+        """Export the OpticsGroups object to a DataFrame."""
+        # fmt: off
+        df = pd.DataFrame(
+            {
+                "mosaicsOpticsGroupName": self.optics_group_name,
+                "mosaicsOpticsGroupNumber": self.optics_group_number,
+                "mosaicsMicrographOriginalPixelSize": (
+                    self.micrograph_original_pixel_size,
+                ),
+                "mosaicsMicrographOriginalShapeX": (
+                    self.micrograph_original_shape_x,
+                ),
+                "mosaicsMicrographOriginalShapeY": (
+                    self.micrograph_original_shape_y,
+                ),
+                "mosaicsMicrographPSDReference": self.micrograph_psd_reference,
+                "mosaicsVoltage": self.voltage,
+                "mosaicsSphericalAberration": self.spherical_aberration,
+                "mosaicsAmplitudeContrastRatio": self.amplitude_contrast_ratio,
+                "mosaicsAdditionalPhaseShift": self.additional_phase_shift,
+                "mosaicsDefocus1": self.defocus_1,
+                "mosaicsDefocus2": self.defocus_2,
+                "mosaicsAstigmatismAzimuth": self.astigmatism_azimuth,
+                "mosaicsImagePixelSize": self.image_pixel_size,
+                "mosaicsImageShapeX": self.image_shape_x,
+                "mosaicsImageShapeY": self.image_shape_y,
+                "mosaicsImageShapeZ": self.image_shape_z,
+                "mosaicsImageDimensionality": self.image_dimensionality,
+            }
+        )
+        # fmt: on
+
+        return df
+
+    @classmethod
+    def from_micrograph(
+        cls,
+        micrograph: "Micrograph",
+        box_size: tuple[int, int],
+        num_particles: int,
+        group_name: str = None,
+        group_number: int = 0,
+    ):
+        """Create a singular OpticsGroups object from a Micrograph object."""
+        if micrograph.contrast_transfer_function is None:
+            raise ValueError(
+                "Micrograph object does not have an associated CTF."
+            )
+
+        # TODO: Other assertions to ensure the micrograph object is valid
+
+        # Set default group name to micrograph file base name
+        if group_name is None and micrograph.image_path is not None:
+            group_name = os.path.basename(micrograph.image_path)
+
+        pixel_size = micrograph.pixel_size
+        shape_x = micrograph.image_array.shape[
+            1
+        ]  # TODO: Check if this is correct
+        shape_y = micrograph.image_array.shape[0]
+        # TODO: Figure out how to get the psd reference file path intelligently
+        # psd_reference = micrograph.power_spectral_density
+
+        _ctf = micrograph.contrast_transfer_function
+        voltage = _ctf.voltage
+        spherical_aberration = _ctf.spherical_aberration
+        amplitude_contrast_ratio = _ctf.amplitude_contrast_ratio
+        additional_phase_shift = _ctf.additional_phase_shift
+        defocus_1 = _ctf.defocus_1
+        defocus_2 = _ctf.defocus_2
+        astigmatism_azimuth = _ctf.astigmatism_azimuth
+
+        # NOTE: Currently assumed that pixel size is same with the micrograph
+        image_pixel_size = pixel_size
+        image_shape_x = box_size[1]
+        image_shape_y = box_size[0]
+        image_shape_z = num_particles
+        image_dimensionality = 3
+
+        return cls(
+            optics_group_name=[group_name],
+            optics_group_number=[group_number],
+            micrograph_original_pixel_size=[pixel_size],
+            micrograph_original_shape_x=[shape_x],
+            micrograph_original_shape_y=[shape_y],
+            micrograph_psd_reference=[None],
+            voltage=[voltage],
+            spherical_aberration=[spherical_aberration],
+            amplitude_contrast_ratio=[amplitude_contrast_ratio],
+            additional_phase_shift=[additional_phase_shift],
+            defocus_1=[defocus_1],
+            defocus_2=[defocus_2],
+            astigmatism_azimuth=[astigmatism_azimuth],
+            image_pixel_size=[image_pixel_size],
+            image_shape_x=[image_shape_x],
+            image_shape_y=[image_shape_y],
+            image_shape_z=[image_shape_z],
+            image_dimensionality=[image_dimensionality],
+        )
+
+    def __init__(
+        self,
+        optics_group_name,
+        optics_group_number,
+        micrograph_original_pixel_size,
+        micrograph_original_shape_x,
+        micrograph_original_shape_y,
+        micrograph_psd_reference,
+        voltage,
+        spherical_aberration,
+        amplitude_contrast_ratio,
+        additional_phase_shift,
+        defocus_1,
+        defocus_2,
+        astigmatism_azimuth,
+        image_pixel_size,
+        image_shape_x,
+        image_shape_y,
+        image_shape_z,
+        image_dimensionality,
+    ):
+        self.optics_group_name = optics_group_name
+        self.optics_group_number = optics_group_number
+        self.micrograph_original_pixel_size = micrograph_original_pixel_size
+        self.micrograph_original_shape_x = micrograph_original_shape_x
+        self.micrograph_original_shape_y = micrograph_original_shape_y
+        self.micrograph_psd_reference = micrograph_psd_reference
+        self.voltage = voltage
+        self.spherical_aberration = spherical_aberration
+        self.amplitude_contrast_ratio = amplitude_contrast_ratio
+        self.additional_phase_shift = additional_phase_shift
+        self.defocus_1 = defocus_1
+        self.defocus_2 = defocus_2
+        self.astigmatism_azimuth = astigmatism_azimuth
+        self.image_pixel_size = image_pixel_size
+        self.image_shape_x = image_shape_x
+        self.image_shape_y = image_shape_y
+        self.image_shape_z = image_shape_z
+        self.image_dimensionality = image_dimensionality
+
+    def __getitem__(self, key: str | int) -> dict:
+        """For indexing the OpticsGroups object by optics group name or number.
+        Does assertion check to ensure the key is valid.
+        """
+        _in_group_name = key in self.optics_group_name
+        _in_group_number = key in self.optics_group_number
+        if not _in_group_name and not _in_group_number:
+            raise ValueError(
+                f"Key {key} absent from optics group names or numbers."
+            )
+
+        # Convert string-based key to integer index
+        if isinstance(key, str):
+            idx = self.optics_group_name.index(key)
+        elif isinstance(key, int):
+            idx = self.optics_group_number.index(key)
+        else:
+            raise ValueError("Key must be either a string or an integer.")
+
+        # fmt: off
+        return {
+            "optics_group_name": self.optics_group_name[idx],
+            "optics_group_number": self.optics_group_number[idx],
+            "micrograph_original_pixel_size": self.micrograph_original_pixel_size[idx],  # noqa: E501
+            "micrograph_original_shape_x": self.micrograph_original_shape_x[idx],  # noqa: E501
+            "micrograph_original_shape_y": self.micrograph_original_shape_y[idx],  # noqa: E501
+            "micrograph_psd_reference": self.micrograph_psd_reference[idx],
+            "voltage": self.voltage[idx],
+            "spherical_aberration": self.spherical_aberration[idx],
+            "amplitude_contrast_ratio": self.amplitude_contrast_ratio[idx],
+            "additional_phase_shift": self.additional_phase_shift[idx],
+            "image_pixel_size": self.image_pixel_size[idx],
+            "image_shape_x": self.image_shape_x[idx],
+            "image_shape_y": self.image_shape_y[idx],
+            "image_shape_z": self.image_shape_z[idx],
+            "image_dimensionality": self.image_dimensionality[idx],
+        }
+        # fmt: on
+
+    # TODO: Functionality for adding in a new optics group
 
 
 class ParticleStack:
@@ -48,84 +333,40 @@ class ParticleStack:
     Attributes:
     -----------
 
-        particle_images (np.ndarray): An array holding a set of cropped
-            particle images. Shape (N, H, W) where N is the number of particles
-            and H, W are the height and width of the particle images.
-
-        pixel_size (float): The size of the pixels in Angstroms.
-        box_size (Tuple[int, int]): The size of the box in pixels.
-        spherical_aberration (float): The spherical aberration of the optics
-            used to collect the images of the particles in mm. Default is 2.7
-            mm.
-        voltage (float): The voltage of the microscope in kV. Default is 300
-            kV.
-        amplitude_contrast (float): The amplitude contrast for the optics used
-            to collect images of the particles. Default is 0.07.
-        B_factor (float): The B-factor of the particles in Angstroms^2. Default
-            is 0.0.
-
-        particle_index (np.ndarray): Index of the particle in the reference
-            stack (corresponds to particle_image_stack_paths). Default is None.
-        particle_class (np.ndarray): Optional array describing class labels for
-            each particle. Default is None.
-        particle_positions (np.ndarray): Optional locations of the particles
-            in pixels relative to the original micrograph. Shape of (N, 2)
-            with N being the number of particles and the columns being (x, y).
-            Default is None.
-        particle_orientations (np.ndarray): Optional orientations of the
-            particles in degrees using the ZYZ convention (phi, theta, psi).
-            Shape of (N, 3) with N being the number of particles and the
-            columns being the three angles. Default is None.
-        particle_defocus_parameters (np.ndarray): Optional defocus parameters
-            of the particles. Shape of (N, 3) where N is the number of
-            particles. The first column is the major defocus and the second
-            column being the minor defocus, both in units of Angstroms, and the
-            third column is the defocus angle, in degrees (z1, z2, angle).
-            Default is None.
-        particle_z_scores (np.ndarray): Optional z-scores of the particles.
-            Default is None.
-        particle_mip_values (np.ndarray): Optional MIP values of the particles.
-            Default is None.
-        particle_image_stack_paths (list[str]): List of paths to the particle
-            stack .mrcs files. Default is None.
-        particle_micrograph_paths (list[str]): List of paths to the original
-            micrograph .mrc files. Default is None.
-        particle_psd_paths (list[str]): List of paths to the micrograph
-            power spectral density files. Default is None.
+    TODO: Update attributes list
 
     Methods:
     --------
 
     """
 
-    # ParticleStack scalar metadata
-    pixel_size: float  # in Angstroms
-    box_size: tuple[int, int]  # in pixels
+    # Held per-particle parameters
+    particle_coordinates_pixel: np.ndarray
+    particle_coordinates_angstrom: np.ndarray
+    particle_defocus: np.ndarray
+    particle_class_names: np.ndarray
+    particle_class_numbers: np.ndarray
+    particle_orientations: np.ndarray
+    particle_index_in_image_stack: np.ndarray
+    particle_image_paths: np.ndarray
+    particle_micrograph_paths: np.ndarray
+    particle_optics_group_names: np.ndarray
+    particle_optics_group_numbers: np.ndarray
 
-    # Image stack data (from Micrograph or loaded from .mrcs)
-    particle_images: np.ndarray
-
-    # Tabular per-particle metadata
-    particle_index: np.ndarray
-    particle_class: np.ndarray
-    particle_positions: np.ndarray  # in pixels relative to original micrograph
-    particle_orientations: np.ndarray  # in degrees (phi, theta, psi)
-    particle_defocus_parameters: np.ndarray  # (z1, z2, angle) in Angstroms
-    particle_z_scores: np.ndarray
-    particle_mip_values: np.ndarray
-
-    # Reference to image stack, micrograph, and psd files
-    particle_image_stack_paths: Optional[list[str]]
-    particle_micrograph_paths: Optional[list[str]]
-    particle_psd_paths: Optional[list[str]]
+    # References to other classes
+    optics_groups: Optional[OpticsGroups] = None
 
     @classmethod
     def from_out_coordinates_and_micrograph(
         cls,
-        out_coordinates_path: str,
         micrograph: "Micrograph",
+        out_coordinates_path: str,
         box_size: tuple[int, int],
-        **kwargs,
+        particle_class_numbers: np.ndarray = None,
+        particle_class_names: np.ndarray = None,
+        image_stack_path: str = None,
+        optics_group_name: str = None,
+        optics_group_number: int = 0,
     ):
         """Create a RefineTemplateResult object from an out_coordinates.txt
         file (produced by cisTEM make_template_result program after
@@ -138,16 +379,22 @@ class ParticleStack:
         just paths to the PSD files.
         """
         coord_df = parse_out_coordinates_result(out_coordinates_path)
+        num_particles = coord_df.shape[0]
 
         # Get pixel coordinates for each of the particles
-        positions_x = coord_df["X"].values
-        positions_y = coord_df["Y"].values
-        positions_x = np.round(positions_x / micrograph.pixel_size).astype(int)
-        positions_y = np.round(positions_y / micrograph.pixel_size).astype(int)
+        coordinates_x_angstrom = coord_df["X"].values
+        coordinates_y_angstrom = coord_df["Y"].values
+        coordinates_angstrom = np.stack(
+            (coordinates_x_angstrom, coordinates_y_angstrom), axis=-1
+        )
+        coordinates_pixel = np.round(
+            coordinates_angstrom / micrograph.pixel_size
+        ).astype(int)
 
-        # Z-scores (SNR) and orientations per particle
-        particle_z_scores = coord_df["Peak"].values
-        particle_orientations = np.stack(
+        defocus = coord_df["Z"].values
+
+        # Get orientations for each of the particles
+        orientations = np.stack(
             (
                 coord_df["Psi"].values,
                 coord_df["Theta"].values,
@@ -156,27 +403,51 @@ class ParticleStack:
             axis=-1,
         )
 
-        # Calculate the absolute defocus parameters for each particle
-        if micrograph.contrast_transfer_function is not None:
-            ctf = micrograph.contrast_transfer_function
-            defocus_1 = ctf.defocus_1 + coord_df["Z"].values
-            defocus_2 = ctf.defocus_2 + coord_df["Z"].values
-            defocus_angle = np.full(defocus_1.size, ctf.astigmatism_azimuth)
-            particle_defocus_parameters = np.stack(
-                (defocus_1, defocus_2, defocus_angle),
-                axis=-1,
-            )
-        else:
-            particle_defocus_parameters = None
+        # Create image stack path, if not passed as a keyword argument
+        # TODO: Decide how to handle relative paths, paths that don't exist,
+        # etc.
+        if image_stack_path is None and micrograph.image_path is not None:
+            basename = str(os.path.basename(micrograph.image_path))
+            dirname = str(os.path.dirname(micrograph.image_path))
 
-        return micrograph.to_particle_stack(
-            box_size=box_size,
-            positions_x=positions_x,
-            positions_y=positions_y,
-            particle_orientations=particle_orientations,
-            particle_defocus_parameters=particle_defocus_parameters,
-            particle_z_scores=particle_z_scores,
-            **kwargs,
+            image_stack_path = f"{dirname}/{basename[:-4]}_stack.mrcs"
+
+        particle_index_in_image_stack = np.arange(num_particles)
+        particle_micrograph_paths = np.array(
+            [micrograph.image_path] * num_particles
+        )
+
+        # Create an OpticsGroups object from the micrograph and held CTF
+        optics_groups = OpticsGroups.from_micrograph(
+            micrograph,
+            box_size,
+            num_particles,
+            group_name=optics_group_name,
+            group_number=optics_group_number,
+        )
+        particle_optics_group_names = [
+            optics_groups.optics_group_name[0]
+        ] * num_particles
+        particle_optics_group_numbers = [
+            optics_groups.optics_group_number[0]
+        ] * num_particles
+
+        # TODO: extract particle bounding boxes from the micrograph
+
+        # Finally, instantiate the ParticleStack object
+        return cls(
+            particle_coordinates_pixel=coordinates_pixel,
+            particle_coordinates_angstrom=coordinates_angstrom,
+            particle_defocus=defocus,
+            particle_class_names=particle_class_names,
+            particle_class_numbers=particle_class_numbers,
+            particle_orientations=orientations,
+            particle_index_in_image_stack=particle_index_in_image_stack,
+            particle_image_paths=[image_stack_path] * num_particles,
+            particle_micrograph_paths=particle_micrograph_paths,
+            particle_optics_group_names=particle_optics_group_names,
+            particle_optics_group_numbers=particle_optics_group_numbers,
+            optics_groups=optics_groups,
         )
 
     @classmethod
@@ -187,220 +458,129 @@ class ParticleStack:
 
         """
         star_dict = starfile.read(star_path, always_dict=True)
-        attr_df = star_dict["particle_stack_attributes"]
-        table_df = star_dict["particle_stack_table"]
+        optics_df = star_dict["optics"]
+        part_df = star_dict["particles"]
 
-        # # TODO: Further data frame verification
-        # assert set(table_df.columns) == set(STAR_COLUMNS), (
-        #     "The columns in the STAR file dont match the expected columns. "
-        #     f"Expected: {STAR_COLUMNS}, Found: {table_df.columns}"
-        # )
+        # Parse the optics dataframe into an OpticsGroups object
+        optics_groups = OpticsGroups.from_df(optics_df)
 
-        # Pixel size and box size
-        pixel_size = attr_df["PixelSize"].values[0]
-        box_size = (attr_df["BoxSize"].values[0], attr_df["BoxSize"].values[0])
-        voltage = attr_df["Voltage"].values[0]
-        spherical_aberration = attr_df["SphericalAberration"].values[0]
-        amplitude_contrast_ratio = attr_df["AmplitudeContrastRatio"].values[0]
-        B_factor = attr_df["BFactor"].values[0]
-
-        # Tabular data per-particle
-        # fmt: off
-        particle_index = table_df["ParticleIndex"].values
-        particle_class = table_df["ParticleClass"].values
-        particle_positions = table_df[["PixelCoordinateX", "PixelCoordinateY"]].values  # noqa: E501
-        particle_orientations = table_df[["OrientationPhi", "OrientationTheta", "OrientationPsi"]].values  # noqa: E501
-        particle_defocus_parameters = table_df[["Defocus1", "Defocus2", "DefocusAngle"]].values  # noqa: E501
-        particle_image_stack_paths = table_df["ImageStackPath"].values
-        particle_micrograph_paths = table_df["MicrographPath"].values
-        particle_psd_paths = table_df["MicrographPSDPath"].values
-        # fmt: on
-
-        # Load in the particle images from the stack paths
-        last_image_stack_path = None
-        to_load_paths = []
-        for i, image_stack_path in enumerate(particle_image_stack_paths):
-            if image_stack_path != last_image_stack_path:
-                to_load_paths.append(image_stack_path)
-                last_image_stack_path = image_stack_path
-        particle_images = np.concatenate(
-            [mrcfile.open(path).data for path in to_load_paths], axis=0
+        # Extract the necessary information from the particles dataframe
+        particle_coordinates_pixel = np.stack(
+            (
+                part_df["mosaicsCoordinateX"].values,
+                part_df["mosaicsCoordinateY"].values,
+            ),
+            axis=-1,
         )
+        particle_coordinates_angstrom = np.stack(
+            (
+                part_df["mosaicsCoordinateXAngstrom"].values,
+                part_df["mosaicsCoordinateYAngstrom"].values,
+            ),
+            axis=-1,
+        )
+        particle_defocus = part_df["mosaicsParticleDefocusAngstrom"].values
+        particle_class_names = part_df["mosaicsParticleClassName"].values
+        particle_class_numbers = part_df["mosaicsParticleClassNumber"].values
+        particle_orientations = np.stack(
+            (
+                part_df["mosaicsOrientationPhi"].values,
+                part_df["mosaicsOrientationTheta"].values,
+                part_df["mosaicsOrientationPsi"].values,
+            ),
+            axis=-1,
+        )
+        particle_index_in_image_stack = part_df[
+            "mosaicsIndexInImageStack"
+        ].values
+        particle_image_paths = part_df["mosaicsParticleImagePath"].values
+        particle_micrograph_paths = part_df["mosaicsMicrographPath"].values
+        particle_optics_group_names = part_df["mosaicsOpticsGroupName"].values
+        particle_optics_group_numbers = part_df[
+            "mosaicsOpticsGroupNumber"
+        ].values
+
+        # TODO validating of the parsed STAR values
 
         return cls(
-            pixel_size=pixel_size,
-            box_size=box_size,
-            voltage=voltage,
-            spherical_aberration=spherical_aberration,
-            amplitude_contrast_ratio=amplitude_contrast_ratio,
-            B_factor=B_factor,
-            particle_images=particle_images,
-            particle_index=particle_index,
-            particle_class=particle_class,
-            particle_positions=particle_positions,
+            optics_groups=optics_groups,
+            particle_coordinates_pixel=particle_coordinates_pixel,
+            particle_coordinates_angstrom=particle_coordinates_angstrom,
+            particle_defocus=particle_defocus,
+            particle_class_names=particle_class_names,
+            particle_class_numbers=particle_class_numbers,
             particle_orientations=particle_orientations,
-            particle_defocus_parameters=particle_defocus_parameters,
-            particle_image_stack_paths=particle_image_stack_paths,
+            particle_index_in_image_stack=particle_index_in_image_stack,
+            particle_image_paths=particle_image_paths,
             particle_micrograph_paths=particle_micrograph_paths,
-            particle_psd_paths=particle_psd_paths,
+            particle_optics_group_names=particle_optics_group_names,
+            particle_optics_group_numbers=particle_optics_group_numbers,
         )
+
+        raise NotImplementedError("Parsing of STAR files not yet implemented.")
 
     def to_star(self, star_path: str, mrcs_path: str):
         """Write the ParticleStack object to a STAR file.
 
         TODO: complete docstring
         """
-        # Export the particle stack array as a separate .mrcs file
-        with mrcfile.new(mrcs_path, overwrite=True) as mrc:
-            mrc.set_data(self.particle_images)
-            mrc.voxel_size = self.pixel_size  # Is this correct?
+        if self.optics_groups is None:
+            raise ValueError("OpticsGroups object not found in ParticleStack.")
+        optics_df = self.optics_groups.to_df()
 
-        # Create the STAR file
-        df_params = pd.DataFrame(
+        # Create the particles dataframe
+        # fmt: off
+        part_df = pd.DataFrame(
             {
-                "PixelSize": [self.pixel_size],
-                "BoxSize": [self.box_size[0]],
-                "Voltage": [self.voltage],
-                "SphericalAberration": [self.spherical_aberration],
-                "AmplitudeContrastRatio": [self.amplitude_contrast_ratio],
-                "BFactor": [self.B_factor],
+                "mosaicsCoordinateX": self.particle_coordinates_pixel[:, 0],
+                "mosaicsCoordinateY": self.particle_coordinates_pixel[:, 1],
+                "mosaicsCoordinateXAngstrom": self.particle_coordinates_angstrom[:, 0],  # noqa: E501
+                "mosaicsCoordinateYAngstrom": self.particle_coordinates_angstrom[:, 1],  # noqa: E501
+                "mosaicsParticleDefocusAngstrom": self.particle_defocus,
+                "mosaicsParticleClassName": self.particle_class_names,
+                "mosaicsParticleClassNumber": self.particle_class_numbers,
+                "mosaicsOrientationPhi": self.particle_orientations[:, 0],
+                "mosaicsOrientationTheta": self.particle_orientations[:, 1],
+                "mosaicsOrientationPsi": self.particle_orientations[:, 2],
+                "mosaicsIndexInImageStack": self.particle_index_in_image_stack,
+                "mosaicsParticleImagePath": self.particle_image_paths,
+                "mosaicsMicrographPath": self.particle_micrograph_paths,
+                "mosaicsOpticsGroupName": self.particle_optics_group_names,
+                "mosaicsOpticsGroupNumber": self.particle_optics_group_numbers,
             }
         )
+        # fmt: on
 
-        df_particles = pd.DataFrame(
-            {
-                "ParticleIndex": self.particle_index,
-                "ImageStackPath": self.particle_image_stack_paths,
-                "ParticleClass": self.particle_class,
-                "PixelCoordinateX": self.particle_positions[:, 0],
-                "PixelCoordinateY": self.particle_positions[:, 1],
-                "OrientationPhi": self.particle_orientations[:, 0],
-                "OrientationTheta": self.particle_orientations[:, 1],
-                "OrientationPsi": self.particle_orientations[:, 2],
-                "Defocus1": self.particle_defocus_parameters[:, 0],
-                "Defocus2": self.particle_defocus_parameters[:, 1],
-                "DefocusAngle": self.particle_defocus_parameters[:, 2],
-                "MicrographPath": self.particle_micrograph_paths,
-                "MicrographPSDPath": self.particle_psd_paths,
-            }
-        )
+        # TODO: write .mrcs files for image stack
+        _ = mrcs_path
 
-        star_dict = {
-            "particle_stack_attributes": df_params,
-            "particle_stack_table": df_particles,
-        }
-
-        starfile.write(star_path, star_dict)
-
-    @classmethod
-    def concatenate(cls, particle_stacks):
-        """Concatenate a list of ParticleStack instances."""
-        new_particle_stack = particle_stacks[0]
-        for particle_stack in particle_stacks[1:]:
-            new_particle_stack += particle_stack
-
-        return new_particle_stack
+        starfile.write({"optics": optics_df, "particles": part_df}, star_path)
 
     def __init__(
         self,
-        pixel_size: float,
-        box_size: tuple[int, int],
-        particle_images: np.ndarray,
-        voltage: float = 300.0,
-        spherical_aberration: float = 2.7,
-        amplitude_contrast_ratio: float = 0.07,
-        B_factor: float = 0.0,
-        particle_index: np.ndarray = None,
-        particle_class: np.ndarray = None,
-        particle_positions: np.ndarray = None,
-        particle_orientations: np.ndarray = None,
-        particle_defocus_parameters: np.ndarray = None,
-        particle_image_stack_paths: np.ndarray = None,
-        particle_micrograph_paths: np.ndarray = None,
-        particle_psd_paths: np.ndarray = None,
+        particle_coordinates_pixel: np.ndarray,
+        particle_coordinates_angstrom: np.ndarray,
+        particle_defocus: np.ndarray,
+        particle_class_names: np.ndarray,
+        particle_class_numbers: np.ndarray,
+        particle_orientations: np.ndarray,
+        particle_index_in_image_stack: np.ndarray,
+        particle_image_paths: np.ndarray,
+        particle_micrograph_paths: np.ndarray,
+        particle_optics_group_names: np.ndarray,
+        particle_optics_group_numbers: np.ndarray,
+        optics_groups: Optional[OpticsGroups] = None,
     ):
-        self.pixel_size = pixel_size
-        self.box_size = box_size
-        self.voltage = voltage
-        self.spherical_aberration = spherical_aberration
-        self.amplitude_contrast_ratio = amplitude_contrast_ratio
-        self.B_factor = B_factor
-        self.particle_images = particle_images
-        self.particle_index = particle_index
-        self.particle_class = particle_class
-        self.particle_positions = particle_positions
+        self.particle_coordinates_pixel = particle_coordinates_pixel
+        self.particle_coordinates_angstrom = particle_coordinates_angstrom
+        self.particle_defocus = particle_defocus
+        self.particle_class_names = particle_class_names
+        self.particle_class_numbers = particle_class_numbers
         self.particle_orientations = particle_orientations
-        self.particle_defocus_parameters = particle_defocus_parameters
-        self.particle_image_stack_paths = particle_image_stack_paths
+        self.particle_index_in_image_stack = particle_index_in_image_stack
+        self.particle_image_paths = particle_image_paths
         self.particle_micrograph_paths = particle_micrograph_paths
-        self.particle_psd_paths = particle_psd_paths
+        self.particle_optics_group_names = particle_optics_group_names
+        self.particle_optics_group_numbers = particle_optics_group_numbers
 
-    def __repr__(self) -> str:
-        """Get string representation of the ParticleStack object."""
-        mem_location = hex(id(self))
-        string = f"ParticleStack object at {mem_location}:"
-        string += f"\n\t{self.particle_images.shape[0]} particles."
-        string += f"\n\t{self.box_size} pixels at {self.pixel_size} Å/pixel."
-        string += f"""\n\tIncludes positions: {
-            self.particle_positions is not None
-        }"""
-        string += f"""\n\tIncludes orientations: {
-            self.particle_orientations is not None
-        }"""
-        string += f"""\n\tIncludes defocus parameters: {
-            self.particle_defocus_parameters is not None
-        }"""
-
-        return string
-
-    def __add__(self, other):
-        """Add two ParticleStack instances by combining the particle images and
-        associated information.
-        """
-        assert (
-            self.box_size == other.box_size
-        ), "Cannot add ParticleStack objects with unequal box sizes"
-        assert (
-            self.pixel_size == other.pixel_size
-        ), "Cannot add ParticleStack objects with unequal pixel sizes"
-
-        new_particle_images = np.concatenate(
-            [self.particle_images, other.particle_images], axis=0
-        )
-
-        # TODO: Check if any optional information is None and broadcast to new
-        # size
-        new_particle_positions = np.concatenate(
-            [self.particle_positions, other.particle_positions], axis=0
-        )
-        new_particle_orientations = np.concatenate(
-            [self.particle_orientations, other.particle_orientations], axis=0
-        )
-        new_particle_defocus_parameters = np.concatenate(
-            [
-                self.particle_defocus_parameters,
-                other.particle_defocus_parameters,
-            ],
-            axis=0,
-        )
-        new_particle_z_scores = np.concatenate(
-            [self.particle_z_scores, other.particle_z_scores], axis=0
-        )
-        new_particle_mip_values = np.concatenate(
-            [self.particle_mip_values, other.particle_mip_values], axis=0
-        )
-        new_micrograph_reference_paths = (
-            self.micrograph_reference_paths + other.micrograph_reference_paths
-        )
-
-        return ParticleStack(
-            self.pixel_size,
-            self.box_size,
-            new_particle_images,
-            new_particle_positions,
-            new_particle_orientations,
-            new_particle_defocus_parameters,
-            new_particle_z_scores,
-            new_particle_mip_values,
-            new_micrograph_reference_paths,
-        )
+        self.optics_groups = optics_groups

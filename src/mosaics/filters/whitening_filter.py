@@ -2,6 +2,7 @@ import numpy as np
 import scipy as sp
 
 from mosaics.utils import _calculate_pixel_radial_distance
+from mosaics.utils import _calculate_pixel_spatial_frequency
 
 
 def _calculate_num_psd_bins(shape: tuple[int, int]) -> int:
@@ -122,10 +123,10 @@ def compute_power_spectral_density_1D(
 
     # Figure out the frequency values associated with the bins
     num_bins = power_spectral_density.size
-    max_freq = (
-        np.sqrt(image.shape[0] ** 2 + image.shape[1] ** 2) / 2
-    )  # corner pixel
-    frequency_values = np.linspace(0, max_freq, num_bins) / pixel_size
+    max_freq = _calculate_pixel_spatial_frequency(
+        image.shape, pixel_size
+    ).max()
+    frequency_values = np.linspace(0, max_freq, num_bins)  # in 1/Angstroms
 
     return power_spectral_density, frequency_values
 

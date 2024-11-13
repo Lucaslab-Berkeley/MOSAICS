@@ -78,6 +78,7 @@ class ContrastTransferFunction:
     amplitude_contrast_ratio: float
     B_factor: float  # in Angstroms^2
     pixel_size: float  # in Angstroms, assume square pixels
+    additional_phase_shift: float = 0.0
 
     @classmethod
     def from_ctffind5_output(
