@@ -216,9 +216,9 @@ def histogram_2d_linear_interpolation(
 def get_cropped_region_of_image(
     image: np.ndarray,
     box_size: tuple[int, int],
-    positions_x: int,
-    positions_y: int,
-    positions_reference: Literal["center", "corner"] = "center",
+    pos_x: int,
+    pos_y: int,
+    positions_reference: Literal["center", "top_left"] = "center",
     handle_bounds: Literal["crop", "fill", "error"] = "error",
 ) -> np.ndarray:
     """Crop the region with given box size and position out of an image.
@@ -226,13 +226,18 @@ def get_cropped_region_of_image(
 
     TODO: Finish docstring
     """
+    assert positions_reference in [
+        "center",
+        "top_left",
+    ], "positions_reference must be either 'center' or 'top_left'."
+
     # Handle the position reference
     if positions_reference == "center":
-        positions_x = int(positions_x - box_size[1] / 2)
-        positions_y = int(positions_y - box_size[0] / 2)
+        pos_x = int(pos_x - box_size[1] / 2)
+        pos_y = int(pos_y - box_size[0] / 2)
 
-    x_bounds = [positions_x, positions_x + box_size[1]]
-    y_bounds = [positions_y, positions_y + box_size[0]]
+    x_bounds = [pos_x, pos_x + box_size[1]]
+    y_bounds = [pos_y, pos_y + box_size[0]]
 
     # Handle the bounds checking
     _bounds_flag = False

@@ -185,7 +185,7 @@ class Micrograph:
         """Create a Micrograph object from an MRC file."""
         with mrcfile.open(mrc_path) as mrc:
             image_array = mrc.data.squeeze().copy()
-            pixel_size = mrc.voxel_size.x
+            pixel_size = mrc.voxel_size.x.item()
 
         return cls(
             image_array,
