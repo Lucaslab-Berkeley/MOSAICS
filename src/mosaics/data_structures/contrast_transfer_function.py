@@ -121,14 +121,15 @@ class ContrastTransferFunction:
         self.voltage = voltage
         self.wavelength = self._wavelength_from_voltage(self.voltage)
 
-        self.spherical_aberration = (
-            spherical_aberration * 1e7 / pixel_size
-        )  # convert to Angstroms, relative to pixel size
+        self.spherical_aberration = spherical_aberration
         self.defocus_1 = defocus_1
         self.defocus_2 = defocus_2
         self.astigmatism_azimuth = astigmatism_azimuth
         self.amplitude_contrast_ratio = amplitude_contrast_ratio
         self.B_factor = B_factor
+
+        # Convert spherical aberration to units of Angstroms from mm
+        self._spherical_aberration = spherical_aberration * 1e7
 
     def _wavelength_from_voltage(self, voltage: float) -> float:
         r"""Convert from electron voltage to wavelength accounting for
@@ -183,7 +184,7 @@ class ContrastTransferFunction:
 
         chi = (
             delta_Z
-            - 0.5 * self.wavelength**2 * self.spherical_aberration * freq_mag2
+            - 0.5 * self.wavelength**2 * self._spherical_aberration * freq_mag2
         )  # noqa: E501
         chi *= np.pi * self.wavelength * freq_mag2
         chi += np.arctan(
@@ -212,7 +213,7 @@ class ContrastTransferFunction:
 
         chi = (
             delta_Z
-            - 0.5 * self.wavelength**2 * self.spherical_aberration * freq_mag2
+            - 0.5 * self.wavelength**2 * self._spherical_aberration * freq_mag2
         )  # noqa: E501
         chi *= np.pi * self.wavelength * freq_mag2
         chi += np.arctan(
@@ -250,9 +251,7 @@ class ContrastTransferFunction:
         """
         return {
             "voltage": self.voltage,
-            "spherical_aberration": self.spherical_aberration
-            * self.pixel_size
-            / 1e7,  # convert back to mm
+            "spherical_aberration": self.spherical_aberration,
             "defocus_1": self.defocus_1,
             "defocus_2": self.defocus_2,
             "astigmatism_azimuth": self.astigmatism_azimuth,
