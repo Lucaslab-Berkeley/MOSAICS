@@ -1,9 +1,9 @@
-# import mrcfile
 import os
 import typing
 from typing import Literal
 from typing import Optional
 
+import mrcfile
 import numpy as np
 import pandas as pd
 import starfile
@@ -174,6 +174,11 @@ class OpticsGroups:
                 "Micrograph object does not have an associated CTF."
             )
 
+        if micrograph.power_spectral_density is None:
+            raise ValueError(
+                "Micrograph object does not have an associated PSD."
+            )
+
         # TODO: Other assertions to ensure the micrograph object is valid
 
         # Set default group name to micrograph file base name
@@ -184,8 +189,7 @@ class OpticsGroups:
         # TODO: Check if this is correct
         shape_x = micrograph.image_array.shape[1]
         shape_y = micrograph.image_array.shape[0]
-        # TODO: Figure out how to get the psd reference file path intelligently
-        # psd_reference = micrograph.power_spectral_density
+        psd_ref = micrograph.power_spectral_density.psd_path
 
         _ctf = micrograph.contrast_transfer_function
         voltage = _ctf.voltage
@@ -209,7 +213,7 @@ class OpticsGroups:
             micrograph_original_pixel_size=[pixel_size],
             micrograph_original_shape_x=[shape_x],
             micrograph_original_shape_y=[shape_y],
-            micrograph_psd_reference=[None],
+            micrograph_psd_reference=[psd_ref],
             voltage=[voltage],
             spherical_aberration=[spherical_aberration],
             amplitude_contrast_ratio=[amplitude_contrast_ratio],
@@ -473,6 +477,7 @@ class ParticleStack:
             num_particles=num_particles,
             positions_reference=extract_position_reference,
             image_stack_path=image_stack_path,
+            handle_bounds="fill",
         )
 
         particle_params["particle_index_in_image_stack"] = np.arange(
@@ -648,15 +653,23 @@ class ParticleStack:
         part_df["mosaicsIndexInImageStack"] = (
             self.particle_index_in_image_stack
         )
-        part_df["mosaicsParticleImagePath"] = self.particle_image_paths
+        # part_df["mosaicsParticleImagePath"] = self.particle_image_paths
+        part_df["mosaicsParticleImagePath"] = mrcs_path
         part_df["mosaicsMicrographPath"] = self.particle_micrograph_paths
         part_df["mosaicsOpticsGroupName"] = self.particle_optics_group_names
         part_df["mosaicsOpticsGroupNumber"] = (
             self.particle_optics_group_numbers
         )
 
-        # TODO: write .mrcs files for image stack
-        _ = mrcs_path
+        # NOTE: All image stacks must have the same pixel size
+        assert len(set(self.optics_groups.image_pixel_size)) == 1
+        _voxel_size = self.optics_groups.image_pixel_size[0]
+
+        assert self.image_stack is not None
+        with mrcfile.new(mrcs_path, overwrite=True) as mrc:
+            mrc.set_data(self.image_stack.astype(np.float32))
+            mrc.voxel_size = (_voxel_size, _voxel_size, _voxel_size)
+            mrc.header["ispg"] = 0  # Set to stack, not volume
 
         starfile.write({"optics": optics_df, "particles": part_df}, star_path)
 
@@ -730,6 +743,8 @@ class ParticleStack:
             elif not _self_has_optics and _other_has_optics:
                 raise ValueError("OpticsGroups object not found in self.")
             # type: ignore
+
+        _handle_optics_groups_addition(self, other)
 
         # Concatenate the ParticleStack arrays together
         self.particle_coordinates_pixel = np.concatenate(
@@ -841,6 +856,7 @@ def _extract_particles_from_micrograph(
     box_size: tuple[int, int],
     num_particles,
     positions_reference: Literal["center", "top_left"],
+    handle_bounds: Literal["fill", "crop", "error"] = "fill",
     image_stack_path: Optional[str] = None,
 ) -> tuple[np.ndarray, str]:
     """Given a set of particle parameters and a Micrograph object, extract the
@@ -869,6 +885,7 @@ def _extract_particles_from_micrograph(
             pos_x=x,
             pos_y=y,
             positions_reference=positions_reference,
+            handle_bounds=handle_bounds,
         )
 
     return image_stack, image_stack_path

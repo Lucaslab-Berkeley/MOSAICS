@@ -1,3 +1,4 @@
+import os
 from typing import Optional
 
 import mrcfile
@@ -22,6 +23,7 @@ class PowerSpectralDensity:
     psd_array (np.ndarray): Intensity values of the power spectral density.
     psd_frequencies (np.ndarray): Frequencies (in units of 1/Angstroms)
         corresponding to the PSD values.
+    psd_path (str): Path to the numpy text file containing the PSD data.
 
     Methods:
     --------
@@ -39,14 +41,21 @@ class PowerSpectralDensity:
     pixel_size: float
     psd_array: np.ndarray
     psd_frequencies: np.ndarray
+    psd_path: Optional[str] = None
 
-    _header = "Row 1: Frequencies (1/Angstroms)\nRow 2: PSD values"
+    _header = (
+        "Power Spectral Density Data generated my MOSAICS \n"
+        "Row 1: Frequencies (1/Angstroms)\n"
+        "Row 2: PSD values"
+    )
 
     @classmethod
     def from_micrograph(
         cls, micrograph: "Micrograph"
     ) -> "PowerSpectralDensity":
-        """Create a PowerSpectralDensity object from a Micrograph object.
+        """Create a PowerSpectralDensity object from a Micrograph object. The
+        export path is set to teh same path as the micrograph object with
+        the extension `_psd.txt`.
 
         Args:
         -----
@@ -54,33 +63,43 @@ class PowerSpectralDensity:
         micrograph (Micrograph): The Micrograph object to create the PSD from.
 
         Returns:
+        --------
 
         PowerSpectralDensity: A PowerSpectralDensity object created from the
             Micrograph object.
         """
-        return cls(micrograph.image_array, micrograph.pixel_size)
+        assert (
+            micrograph.image_path is not None
+        ), "Micrograph object must have an image path to create a PSD object."
+        path = os.path.splitext(micrograph.image_path)[0] + "_psd.txt"
+        return cls(micrograph.image_array, micrograph.pixel_size, path)
 
-    def __init__(self, image: np.ndarray, pixel_size: float):
+    def __init__(
+        self, image: np.ndarray, pixel_size: float, psd_path: str = None
+    ):
         self.pixel_size = pixel_size
+        self.psd_path = psd_path
 
         # Compute the power spectral density of the image
         tmp = compute_power_spectral_density_1D(image, pixel_size)
         self.psd_array = tmp[0]
         self.psd_frequencies = tmp[1]
 
-    def to_numpy_txt(self, path: str) -> None:
+    def to_numpy_txt(self, path: str = None) -> None:
         """Write the PSD data to a numpy text file.
 
         Args:
         -----
 
-        path (str): Path to the numpy text file.
+        path (str): Optional path to the numpy text file. By default, the path
+            is the held `psd_path` attribute.
 
         Returns:
         --------
 
         None
         """
+        path = path if path is not None else self.psd_path
         np.savetxt(
             path,
             (self.psd_frequencies, self.psd_array),
@@ -167,10 +186,7 @@ class Micrograph:
 
     pixel_size: float  # In Angstroms, assume square pixels
     image_array: np.ndarray
-    image_array_whitened: Optional[np.ndarray] = None
-
     image_path: Optional[str] = None
-    image_whitened_path: Optional[str] = None
 
     contrast_transfer_function: Optional[ContrastTransferFunction] = None
     power_spectral_density: Optional[PowerSpectralDensity] = None
@@ -209,36 +225,36 @@ class Micrograph:
         self.contrast_transfer_function = contrast_transfer_function
 
         if calculate_power_spectral_density:
-            self.power_spectral_density = PowerSpectralDensity(
-                image_array, pixel_size
+            self.power_spectral_density = PowerSpectralDensity.from_micrograph(
+                self
             )
 
-    def whiten_image(self) -> np.ndarray:
-        """Helper function to whiten the passed image using the held
-        PowerSpectralDensity object. PSD is calculated if not already done.
-        Updates the held `image_array_whitened` attribute and returns the
-        whitened image.
+    # def whiten_image(self) -> np.ndarray:
+    #     """Helper function to whiten the passed image using the held
+    #     PowerSpectralDensity object. PSD is calculated if not already done.
+    #     Updates the held `image_array_whitened` attribute and returns the
+    #     whitened image.
 
-        Args:
-        -----
-        None
+    #     Args:
+    #     -----
+    #     None
 
-        Returns:
-        --------
+    #     Returns:
+    #     --------
 
-            np.ndarray: The whitened image.
-        """
-        if self.power_spectral_density is None:
-            self.power_spectral_density = PowerSpectralDensity(
-                self.image_array, self.pixel_size
-            )
+    #         np.ndarray: The whitened image.
+    #     """
+    #     if self.power_spectral_density is None:
+    #         self.power_spectral_density = PowerSpectralDensity(
+    #             self.image_array, self.pixel_size
+    #         )
 
-        tmp = self.power_spectral_density.apply_whitening_filter(
-            self.image_array, self.pixel_size
-        )
-        self.image_array_whitened = tmp
+    #     tmp = self.power_spectral_density.apply_whitening_filter(
+    #         self.image_array, self.pixel_size
+    #     )
+    #     self.image_array_whitened = tmp
 
-        return tmp
+    #     return tmp
 
     # def _validate_to_particle_stack_inputs(
     #     self,
