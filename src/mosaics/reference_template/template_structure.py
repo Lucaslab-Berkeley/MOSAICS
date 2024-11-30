@@ -3,6 +3,10 @@ from typing import Union
 
 import mmdf
 import numpy as np
+import torch
+from ttsim3d.simulate3d import _calculate_lead_term
+from ttsim3d.simulate3d import place_voxel_neighborhoods_in_volume
+from ttsim3d.simulate3d import simulate_atomwise_scattering_potentials
 
 AMINO_ACID_RESIDUES = [
     "ALA",
@@ -35,6 +39,7 @@ class TemplateStructure:
     TODO: finish docstring
     """
 
+    # Attributes associated with an atomic structure
     model: np.ndarray
     chain: np.ndarray
     residue: np.ndarray
@@ -53,8 +58,24 @@ class TemplateStructure:
     # occupancy: np.ndarray
     b_factor: np.ndarray
 
+    # Attributes associated with a 3D volume for Fourier slicing
+    atomwise_potentials: np.ndarray  # (n, h, w, d) array of potentials
+    atomwise_voxel_positions: np.ndarray
+    pixel_size: float
+    volume_shape: tuple
+
+    upsampling: int
+    upsampled_pixel_size: float
+    upsampled_volume_shape: tuple
+
     @classmethod
-    def from_file(cls, file_path: str) -> "TemplateStructure":
+    def from_file(
+        cls,
+        file_path: str,
+        pixel_size: float,
+        volume_shape: tuple[int, int, int],
+        upsampling: int = -1,
+    ) -> "TemplateStructure":
         """Create a TemplateStructure object from a .pdb or .cif file.
 
         Args:
@@ -78,6 +99,9 @@ class TemplateStructure:
             y=df["y"].values,
             z=df["z"].values,
             b_factor=df["b_isotropic"].values,
+            pixel_size=pixel_size,
+            volume_shape=volume_shape,
+            upsampling=upsampling,
         )
 
     def __init__(
@@ -94,6 +118,9 @@ class TemplateStructure:
         y: np.ndarray,
         z: np.ndarray,
         b_factor: np.ndarray,
+        pixel_size: float,
+        volume_shape: tuple,
+        upsampling: int = -1,
     ):
         self.model = model
         self.chain = chain
@@ -107,6 +134,13 @@ class TemplateStructure:
         self.y = y
         self.z = z
         self.b_factor = b_factor
+
+        self.pixel_size = pixel_size
+        self.volume_shape = volume_shape
+        self.upsampling = upsampling
+
+        # Calculate the atomwise potentials
+        self._calculate_atomwise_potentials()
 
     def center_by_mass(self) -> None:
         """Transform the structure so center of mass is at (0, 0, 0)."""
@@ -166,6 +200,8 @@ class TemplateStructure:
         self.z = self.z[new_index]
         self.b_factor = self.b_factor[new_index]
 
+        self.atomwise_potentials = self.atomwise_potentials[new_index]
+
     def randomize_chain_order(self) -> None:
         """Randomize the order of the chains in the structure."""
         new_chain_order = np.random.permutation(np.unique(self.chain))
@@ -199,6 +235,8 @@ class TemplateStructure:
             y=self.y[atom_idxs],
             z=self.z[atom_idxs],
             b_factor=self.b_factor[atom_idxs],
+            pixel_size=self.pixel_size,
+            volume_shape=self.volume_shape,
         )
 
         return new_template_structure
@@ -272,3 +310,81 @@ class TemplateStructure:
             self = self._remove_atoms_by_index(removed_atom_idxs)
 
         return None
+
+    def _calculate_atomwise_potentials(self):
+        """Helper function for calculating scattering potentials from model
+
+        TODO: finish docstring
+        """
+        atom_pos_zyx = np.array([self.z, self.y, self.x]).T
+        atom_ids = [element.upper() for element in self.element]
+        atom_b_factors = self.b_factor
+        sim_pixel_spacing = self.pixel_size
+        sim_volume_shape = self.volume_shape
+
+        # NOTE: 300.0 is hardcoded and needs to be grabbed from another class
+        lead_term = _calculate_lead_term(300.0, sim_pixel_spacing)
+
+        # Cast everything to torch tensors
+        # TODO: Refactor codebase to use torch tensors
+        atom_pos_zyx = torch.tensor(atom_pos_zyx, dtype=torch.float32)
+        atom_b_factors = torch.tensor(atom_b_factors, dtype=torch.float32)
+
+        scattering_results = simulate_atomwise_scattering_potentials(
+            atom_positions_zyx=atom_pos_zyx,
+            atom_ids=atom_ids,
+            atom_b_factors=atom_b_factors,
+            sim_pixel_spacing=sim_pixel_spacing,
+            sim_volume_shape=sim_volume_shape,
+            lead_term=lead_term,
+            upsampling=self.upsampling,
+        )
+
+        self.atomwise_potentials = scattering_results[
+            "neighborhood_potentials"
+        ]
+        self.atomwise_voxel_positions = scattering_results["voxel_positions"]
+        self.upsampling = scattering_results["upsampling"]
+        self.upsampled_pixel_size = scattering_results["upsampled_pixel_size"]
+        self.upsampled_volume_shape = scattering_results["upsampled_shape"]
+
+    def get_masked_volume(
+        self, mask_indices: np.ndarray, invert: bool = False
+    ) -> np.ndarray:
+        """Return the real=space volume with the indicated atoms masked.
+
+        Args:
+            mask_indices (np.ndarray): The indices of the atoms remove.
+            invert (bool): If invert is True, then only the atoms at the
+                indices are kept.
+
+        Returns:
+            np.ndarray: The masked volume.
+        """
+        # Remove the mask_indices from all idxs if invert is False
+        if not invert:
+            mask_indices = np.setdiff1d(
+                np.arange(self.atom.size), mask_indices
+            )
+
+        # Calculate the upsampled volume from the atomwise potentials
+        final_volume = torch.zeros(
+            self.upsampled_volume_shape, dtype=torch.float32
+        )
+        final_volume = place_voxel_neighborhoods_in_volume(
+            neighborhood_potentials=self.atomwise_potentials[mask_indices],
+            voxel_positions=self.atomwise_voxel_positions[mask_indices],
+            final_volume=final_volume,
+        )
+
+        # final_volume = torch.fft.fftshift(final_volume, dim=(-3, -2, -1))
+        # final_volume_FFT = torch.fft.rfftn(final_volume, dim=(-3, -2, -1))
+
+        # Apply the necessary filtering to the volume
+        # NOTE: All these filters are independent of the mask. Should
+        # pre-calculate these as well since their application takes a
+        # non-trivial amount of time.
+        # BUT not for this class to hold reference to.
+        # TODO
+
+        return final_volume

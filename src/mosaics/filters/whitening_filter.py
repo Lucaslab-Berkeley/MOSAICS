@@ -15,7 +15,10 @@ def _calculate_num_psd_bins(shape: tuple[int, int]) -> int:
 
 
 def calculate_radial_sum(
-    array, num_bins: int = None, interpolation: str = "linear"
+    array,
+    num_bins: int = None,
+    interpolation: str = "linear",
+    pixel_size: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Given a 2D array, usually an image, calculate the radial sum of the
     array with the given number of bins and interpolation method. Returns the
@@ -38,7 +41,11 @@ def calculate_radial_sum(
     if num_bins is None:
         num_bins = _calculate_num_psd_bins(array.shape)
 
-    r = _calculate_pixel_radial_distance(array.shape)
+    # Transform pixel spatial frequency grid (0 to 0.70711) to an index-like
+    # grid (0 to num_bins - 1) for radial averaging
+    r = _calculate_pixel_spatial_frequency(array.shape, pixel_size)
+    r /= np.sqrt(2)  # Transform to [0, 1]
+    r *= num_bins - 1  # Transform to [0, num_bins - 1]
 
     # Initialize the sampling arrays
     values_sum = np.zeros(num_bins)

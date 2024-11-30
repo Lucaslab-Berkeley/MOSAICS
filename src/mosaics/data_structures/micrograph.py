@@ -153,18 +153,17 @@ class PowerSpectralDensity:
 
         # Interpolate the PSD values to the image's spatial frequencies
         psd_interp = sp.interpolate.interp1d(
-            points=[self.psd_frequencies],
-            values=[self.psd_array],
-            xi=freq_grid,
-            method="linear",
+            x=self.psd_frequencies,
+            y=self.psd_array,
+            kind="linear",
             bounds_error=False,
             fill_value=1e-10,
         )
 
         # Reshape and apply the filter to the image
-        psd_interp = psd_interp.reshape(image.shape)
-        np.where(psd_interp == 0, 1e12, psd_interp)
-        whitening_filter = 1 / psd_interp
+        psd_vals = psd_interp(freq_grid).reshape(image.shape)
+        np.where(psd_vals == 0, 1e12, psd_vals)
+        whitening_filter = 1 / psd_vals
 
         image_fft = np.fft.fft2(image)
         image_fft = np.fft.fftshift(image_fft)
