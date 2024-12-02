@@ -4,6 +4,12 @@ from typing import Union
 import mmdf
 import numpy as np
 import torch
+
+# from torch_fourier_slice.dft_utils import ifftshift_2d
+# from torch_fourier_slice.dft_utils import fftshift_2d
+from torch_fourier_slice.dft_utils import fftshift_3d
+from torch_fourier_slice.dft_utils import ifftshift_3d
+from ttsim3d.grid_coords import fourier_rescale_3d_force_size
 from ttsim3d.simulate3d import _calculate_lead_term
 from ttsim3d.simulate3d import place_voxel_neighborhoods_in_volume
 from ttsim3d.simulate3d import simulate_atomwise_scattering_potentials
@@ -59,8 +65,8 @@ class TemplateStructure:
     b_factor: np.ndarray
 
     # Attributes associated with a 3D volume for Fourier slicing
-    atomwise_potentials: np.ndarray  # (n, h, w, d) array of potentials
-    atomwise_voxel_positions: np.ndarray
+    atomwise_potentials: np.ndarray  # (n, h*w*d) array of potentials
+    atomwise_voxel_positions: np.ndarray  # (n, h*w*d, 3) array of integers
     pixel_size: float
     volume_shape: tuple
 
@@ -121,6 +127,7 @@ class TemplateStructure:
         pixel_size: float,
         volume_shape: tuple,
         upsampling: int = -1,
+        center_by_mass: bool = True,
     ):
         self.model = model
         self.chain = chain
@@ -138,6 +145,10 @@ class TemplateStructure:
         self.pixel_size = pixel_size
         self.volume_shape = volume_shape
         self.upsampling = upsampling
+
+        # Center by mass, if requested, before potential calculation
+        if center_by_mass:
+            self.center_by_mass()
 
         # Calculate the atomwise potentials
         self._calculate_atomwise_potentials()
@@ -312,7 +323,8 @@ class TemplateStructure:
         return None
 
     def _calculate_atomwise_potentials(self):
-        """Helper function for calculating scattering potentials from model
+        """Helper function for calculating scatterin
+        g potentials from model
 
         TODO: finish docstring
         """
@@ -348,43 +360,64 @@ class TemplateStructure:
         self.upsampled_pixel_size = scattering_results["upsampled_pixel_size"]
         self.upsampled_volume_shape = scattering_results["upsampled_shape"]
 
-    def get_masked_volume(
-        self, mask_indices: np.ndarray, invert: bool = False
-    ) -> np.ndarray:
+    def volume_from_atoms(self, atom_idxs: torch.Tensor = None) -> np.ndarray:
         """Return the real=space volume with the indicated atoms masked.
 
         Args:
-            mask_indices (np.ndarray): The indices of the atoms remove.
-            invert (bool): If invert is True, then only the atoms at the
-                indices are kept.
+            atom_idxs (np.ndarray): The indices of the atoms to place into
+            the volume. If None, then all atoms are placed.
 
         Returns:
-            np.ndarray: The masked volume.
+            np.ndarray: The volume.
         """
         # Remove the mask_indices from all idxs if invert is False
-        if not invert:
-            mask_indices = np.setdiff1d(
-                np.arange(self.atom.size), mask_indices
-            )
+        if atom_idxs is None:
+            atom_idxs = torch.arange(self.atomwise_potentials.size(0))
 
-        # Calculate the upsampled volume from the atomwise potentials
-        final_volume = torch.zeros(
+        volume_upsampled = torch.zeros(
             self.upsampled_volume_shape, dtype=torch.float32
         )
-        final_volume = place_voxel_neighborhoods_in_volume(
-            neighborhood_potentials=self.atomwise_potentials[mask_indices],
-            voxel_positions=self.atomwise_voxel_positions[mask_indices],
-            final_volume=final_volume,
+        volume_upsampled = place_voxel_neighborhoods_in_volume(
+            neighborhood_potentials=self.atomwise_potentials[atom_idxs],
+            voxel_positions=self.atomwise_voxel_positions[atom_idxs],
+            final_volume=volume_upsampled,
         )
 
-        # final_volume = torch.fft.fftshift(final_volume, dim=(-3, -2, -1))
-        # final_volume_FFT = torch.fft.rfftn(final_volume, dim=(-3, -2, -1))
+        # Early return if no upsampling is requested
+        # TODO: Better code organization for this method
+        if (
+            self.upsampling == 1
+            or self.upsampled_pixel_size == self.pixel_size
+        ):
+            return volume_upsampled
 
-        # Apply the necessary filtering to the volume
-        # NOTE: All these filters are independent of the mask. Should
-        # pre-calculate these as well since their application takes a
-        # non-trivial amount of time.
-        # BUT not for this class to hold reference to.
-        # TODO
+        volume_upsampled = fftshift_3d(volume_upsampled, rfft=False)
+        volume_upsampled_RFFT = torch.fft.rfftn(
+            volume_upsampled, dim=(-3, -2, -1)
+        )
+
+        # TODO: Exposure filtering on upsampled volume
+
+        volume_RFFT = fourier_rescale_3d_force_size(
+            volume_fft=volume_upsampled_RFFT,
+            volume_shape=self.upsampled_volume_shape,
+            target_size=self.volume_shape[0],  # TODO: pass this arg as a tuple
+            rfft=True,
+            fftshift=False,
+        )
+
+        # TODO: MTF filtering on volume_RFFT
+
+        # Cropping and inverse RFFT
+        final_volume = torch.fft.irfftn(
+            volume_RFFT,
+            s=(
+                self.volume_shape[0],
+                self.volume_shape[0],
+                self.volume_shape[0],
+            ),
+            dim=(-3, -2, -1),
+        )
+        final_volume = ifftshift_3d(final_volume, rfft=False)
 
         return final_volume
