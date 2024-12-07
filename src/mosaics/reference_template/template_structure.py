@@ -1,4 +1,5 @@
-from typing import Optional
+from typing import Iterator
+from typing import Literal
 from typing import Union
 
 import mmdf
@@ -37,6 +38,37 @@ AMINO_ACID_RESIDUES = [
     "VAL",
 ]
 RNA_RESIDUES = ["A", "C", "G", "U"]
+
+
+def sliding_window_iterator(
+    length: int, width: int, increment: int
+) -> Iterator[np.ndarray]:
+    """Generator function 1-dimensional sliding window indexes.
+
+    Each iteration yields a list/array of indexes with length `width`. The
+    first index is `0` and subsequent indexes are incremented by `increment`
+    until the end of the array is reached. Note that the last window may be
+    smaller than `width` if there is not perfect factorization.
+
+    Args:
+        length (int): The length of the array to slide over.
+        width (int): The width of the sliding window.
+        increment (int): The increment of the sliding window.
+
+    Yields:
+        np.ndarray: The indexes of the sliding window at each iteration.
+
+    Example:
+        >>> for idx in sliding_window_iterator(10, 3, 2):
+        ...     print(idx)
+        [0 1 2]
+        [2 3 4]
+        [4 5 6]
+        [6 7 8]
+        [8, 9]
+    """
+    for i in range(0, length - width + increment, increment):
+        yield np.arange(i, i + width)
 
 
 class TemplateStructure:
@@ -174,91 +206,91 @@ class TemplateStructure:
     #     self.y = coordinates[:, 1]
     #     self.z = coordinates[:, 2]
 
-    def set_chain_order(self, chain_order: np.ndarray) -> None:
-        """Set the order of the chains in the structure.
+    def chain_residue_pairs(
+        self,
+        chain_order: str = None,
+        residue_types: Literal["both", "amino_acid", "rna"] = "both",
+    ) -> list[tuple[str, int]]:
+        """Generate chain-residue pairs based on the specified residue types.
 
-        Args:
-            chain_order (np.ndarray): The order of the chains.
-        """
-        if set(chain_order) != set(self.chain):
-            raise ValueError(
-                "Members of `chain_order` do not match the held chains. "
-                f"Missing: {set(self.chain) - set(chain_order)}"
-                f"Extra:   {set(chain_order) - set(self.chain)}"
-            )
-
-        # Get the current ordering of the chains. NOTE: This assumes the
-        # chains are already ordered (e.g. [AAABBCCCC] not [ABBACAC])
-        current_chain_index = {
-            chain: np.where(self.chain == chain)[0]
-            for chain in np.unique(self.chain)
-        }
-        new_index = np.concatenate(
-            [current_chain_index[chain] for chain in chain_order]
-        )
-
-        # Re-index all of the attribute arrays
-        self.model = self.model[new_index]
-        self.chain = self.chain[new_index]
-        self.residue = self.residue[new_index]
-        self.residue_id = self.residue_id[new_index]
-        self.atom = self.atom[new_index]
-        self.element = self.element[new_index]
-        self.atomic_number = self.atomic_number[new_index]
-        self.atomic_weight = self.atomic_weight[new_index]
-        self.x = self.x[new_index]
-        self.y = self.y[new_index]
-        self.z = self.z[new_index]
-        self.b_factor = self.b_factor[new_index]
-
-        self.atomwise_potentials = self.atomwise_potentials[new_index]
-
-    def randomize_chain_order(self) -> None:
-        """Randomize the order of the chains in the structure."""
-        new_chain_order = np.random.permutation(np.unique(self.chain))
-
-        self.set_chain_order(new_chain_order)
-
-    def _remove_atoms_by_index(
-        self, atom_idxs: np.ndarray
-    ) -> "TemplateStructure":
-        """Remove atoms from the structure by their index.
-
-        Args:
-            atom_idxs (np.ndarray): The indices of the atoms to remove.
+        Parameters:
+        -----------
+        chain_order (str): The ordering of the chains. If None, the chains are
+            in sequential order. Otherwise should be a string where characters
+            are the chain identifiers in the requested order.
+        residue_types (Literal["both", "amino_acid", "rna"]): The residue types
+            to include in the pairs. Default is "both".
 
         Returns:
-            TemplateStructure: A new structure with the atoms removed.
+        --------
+        list[tuple[str, int]]: The chain-residue pairs.
         """
-        # Invert the indices to keep the atoms
-        atom_idxs = np.setdiff1d(np.arange(self.atom.size), atom_idxs)
+        assert residue_types in ["both", "amino_acid", "rna"]
 
-        new_template_structure = TemplateStructure(
-            model=self.model[atom_idxs],
-            chain=self.chain[atom_idxs],
-            residue=self.residue[atom_idxs],
-            residue_id=self.residue_id[atom_idxs],
-            atom=self.atom[atom_idxs],
-            element=self.element[atom_idxs],
-            atomic_number=self.atomic_number[atom_idxs],
-            atomic_weight=self.atomic_weight[atom_idxs],
-            x=self.x[atom_idxs],
-            y=self.y[atom_idxs],
-            z=self.z[atom_idxs],
-            b_factor=self.b_factor[atom_idxs],
-            pixel_size=self.pixel_size,
-            volume_shape=self.volume_shape,
-        )
+        # Indexes of which residues to include
+        if residue_types == "both":
+            keep_idxs = np.ones_like(self.residue, dtype=bool)
+        elif residue_types == "amino_acid":
+            keep_idxs = np.isin(self.residue, AMINO_ACID_RESIDUES)
+        elif residue_types == "rna":
+            keep_idxs = np.isin(self.residue, RNA_RESIDUES)
 
-        return new_template_structure
+        # dictionary has keys of unique chains and values of sorted residue IDs
+        chain_residue_id_dict = {
+            c: np.sort(np.unique(self.residue_id[self.chain == c]))
+            for c in set(self.chain[keep_idxs])
+        }
 
-    def remove_atoms_from_residues(
+        # Check that the requested chain order is valid (or populate)
+        if chain_order is None:
+            chain_order = sorted(set(chain_residue_id_dict.keys()))
+        else:
+            assert len(set(chain_order)) == len(
+                chain_order
+            ), "The chain order must not contain duplicate chain identifiers."
+            assert set(chain_order) == set(chain_residue_id_dict.keys()), (
+                "The chain order must contain all chain identifiers.\n"
+                "Expected to contain: "
+                f"{sorted(set(chain_residue_id_dict.keys()))}.\n"
+                f"Received (sorted)  : {sorted(set(chain_order))}."
+            )
+
+        # Finally, create the pairs
+        pairs = []
+        for chain in chain_order:
+            for residue_id in chain_residue_id_dict[chain]:
+                pairs.append((chain, residue_id))
+
+        return pairs
+
+    # def masked_atoms_index(
+    #     self, chain_residue_pairs: list[tuple[str, int]]
+    # ) -> np.ndarray:
+    #     """Return the indices of the atoms to mask.
+
+    #     Args:
+    #         chain_residue_pairs (list[tuple[str, int]]): The chain and
+    #           residue pairs to mask.
+
+    #     Returns:
+    #         np.ndarray: The indices of the atoms.
+    #     """
+    #     atom_idxs = []
+
+    #     for chain, residue_id in chain_residue_pairs:
+    #         idxs = np.where(
+    #             (self.chain == chain) & (self.residue_id == residue_id)
+    #         )[0]
+    #         atom_idxs.extend(idxs)
+
+    #     return np.array(atom_idxs)
+
+    def get_removed_atoms_indexes(
         self,
         chains: Union[list[str], np.ndarray],
         residue_ids: Union[list[int], np.ndarray],
-        inplace: bool = False,
         return_removed_atoms: bool = False,
-    ) -> Optional["TemplateStructure"]:
+    ) -> np.ndarray:
         """Removes certain atoms from residues in the structure; these residues
         are indexed by their chain and residue ID. Atoms removed depend on the
         residue type with amino acids removing (N, CA, C, O) and nucleic acids
@@ -272,9 +304,6 @@ class TemplateStructure:
         residue_ids (Union[list[int], np.ndarray]): The residue IDs to remove
             atoms from. These ids correspond to the residue number in the the
             chain.
-        inplace (bool): Optional boolean specifying Whether to modify the
-            structure object in place. Default is False a new structure is
-            returned.
         return_removed_atoms (bool): Optional boolean specifying whether to
             return the removed atoms as a new TemplateStructure object. Default
             is False.
@@ -314,13 +343,7 @@ class TemplateStructure:
                 np.arange(self.atom.size), removed_atom_idxs
             )
 
-        # Choose inplace or return a new structure
-        if not inplace:
-            return self._remove_atoms_by_index(removed_atom_idxs)
-        else:
-            self = self._remove_atoms_by_index(removed_atom_idxs)
-
-        return None
+        return removed_atom_idxs
 
     def _calculate_atomwise_potentials(self):
         """Helper function for calculating scatterin
