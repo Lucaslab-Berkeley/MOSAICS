@@ -3,6 +3,8 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
 from torch_fourier_slice import extract_central_slices_rfft_3d
+from torch_fourier_slice.dft_utils import fftshift_3d
+from torch_fourier_slice.dft_utils import ifftshift_2d
 
 
 class FourierSliceProjector:
@@ -68,9 +70,9 @@ class FourierSliceProjector:
 
         # Calculate the RFFT if not provided
         if potential_rfft is None:
-            # potential_rfft = torch.fft.fftshift(potential)
-            potential_rfft = torch.fft.fftn(potential)
-            potential_rfft = torch.fft.fftshift(potential_rfft)
+            potential_rfft = fftshift_3d(potential, rfft=False)
+            potential_rfft = torch.fft.rfftn(potential)
+            potential_rfft = fftshift_3d(potential_rfft, rfft=True)
 
         self.potential_rfft = potential_rfft
 
@@ -129,8 +131,8 @@ class FourierSliceProjector:
         """
         fourier_slice = self.take_fourier_slice(phi, theta, psi)
 
-        # fourier_slice = torch.fft.ifftshift(fourier_slice, dim=(-2, -1))
+        fourier_slice = ifftshift_2d(fourier_slice, rfft=True)
         projection = torch.fft.irfftn(fourier_slice, dim=(-2, -1))
-        # projection = torch.fft.ifftshift(projection, dim=(-2, -1))
+        # projection = ifftshift_2d(projection, rfft=False)
 
         return projection

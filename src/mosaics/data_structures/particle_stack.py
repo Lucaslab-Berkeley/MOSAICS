@@ -559,7 +559,7 @@ class ParticleStack:
         return self + new_particle_stack
 
     @classmethod
-    def from_star(cls, star_path: str):
+    def from_star(cls, star_path: str, mrcs_path: str):
         """Create a ParticleStack object from a STAR file.
 
         TODO: complete docstring
@@ -610,6 +610,8 @@ class ParticleStack:
 
         # TODO validating of the parsed STAR values
 
+        image_stack = mrcfile.open(mrcs_path).data.copy()
+
         return cls(
             optics_groups=optics_groups,
             particle_coordinates_pixel=particle_coordinates_pixel,
@@ -623,6 +625,7 @@ class ParticleStack:
             particle_micrograph_paths=particle_micrograph_paths,
             particle_optics_group_names=particle_optics_group_names,
             particle_optics_group_numbers=particle_optics_group_numbers,
+            image_stack=image_stack,
         )
 
     def to_star(self, star_path: str, mrcs_path: str):

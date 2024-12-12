@@ -1,17 +1,19 @@
 from typing import Iterator
 from typing import Literal
+from typing import Optional
 from typing import Union
 
 import mmdf
 import numpy as np
 import torch
-
-# from torch_fourier_slice.dft_utils import ifftshift_2d
-# from torch_fourier_slice.dft_utils import fftshift_2d
+from scipy.spatial.transform import Rotation
+from torch_fourier_filter.ctf import calculate_ctf_2d
+from torch_fourier_slice import extract_central_slices_rfft_3d
+from torch_fourier_slice.dft_utils import fftshift_2d
 from torch_fourier_slice.dft_utils import fftshift_3d
-from torch_fourier_slice.dft_utils import ifftshift_3d
-from ttsim3d.grid_coords import fourier_rescale_3d_force_size
+from torch_fourier_slice.dft_utils import ifftshift_2d
 from ttsim3d.simulate3d import _calculate_lead_term
+from ttsim3d.simulate3d import apply_simulation_filters
 from ttsim3d.simulate3d import place_voxel_neighborhoods_in_volume
 from ttsim3d.simulate3d import simulate_atomwise_scattering_potentials
 
@@ -36,6 +38,7 @@ AMINO_ACID_RESIDUES = [
     "TRP",
     "TYR",
     "VAL",
+    "UNK",  # Unknown residue
 ]
 RNA_RESIDUES = ["A", "C", "G", "U"]
 
@@ -68,7 +71,7 @@ def sliding_window_iterator(
         [8, 9]
     """
     for i in range(0, length - width + increment, increment):
-        yield np.arange(i, i + width)
+        yield np.arange(i, min(i + width, length))
 
 
 class TemplateStructure:
@@ -113,6 +116,7 @@ class TemplateStructure:
         pixel_size: float,
         volume_shape: tuple[int, int, int],
         upsampling: int = -1,
+        center_by_mass: bool = True,
     ) -> "TemplateStructure":
         """Create a TemplateStructure object from a .pdb or .cif file.
 
@@ -140,6 +144,7 @@ class TemplateStructure:
             pixel_size=pixel_size,
             volume_shape=volume_shape,
             upsampling=upsampling,
+            center_by_mass=center_by_mass,
         )
 
     def __init__(
@@ -208,7 +213,7 @@ class TemplateStructure:
 
     def chain_residue_pairs(
         self,
-        chain_order: str = None,
+        chain_order: Optional[str | list[str]] = None,
         residue_types: Literal["both", "amino_acid", "rna"] = "both",
     ) -> list[tuple[str, int]]:
         """Generate chain-residue pairs based on the specified residue types.
@@ -263,28 +268,6 @@ class TemplateStructure:
 
         return pairs
 
-    # def masked_atoms_index(
-    #     self, chain_residue_pairs: list[tuple[str, int]]
-    # ) -> np.ndarray:
-    #     """Return the indices of the atoms to mask.
-
-    #     Args:
-    #         chain_residue_pairs (list[tuple[str, int]]): The chain and
-    #           residue pairs to mask.
-
-    #     Returns:
-    #         np.ndarray: The indices of the atoms.
-    #     """
-    #     atom_idxs = []
-
-    #     for chain, residue_id in chain_residue_pairs:
-    #         idxs = np.where(
-    #             (self.chain == chain) & (self.residue_id == residue_id)
-    #         )[0]
-    #         atom_idxs.extend(idxs)
-
-    #     return np.array(atom_idxs)
-
     def get_removed_atoms_indexes(
         self,
         chains: Union[list[str], np.ndarray],
@@ -313,32 +296,36 @@ class TemplateStructure:
 
 
         """
-        removed_atom_idxs = []  # These are per-atom indices
+        # Create masks for amino acid and RNA atoms
+        AMINO_ACID_ATOMS = ["N", "CA", "C", "O"]
+        RNA_ATOMS = ["C1'", "C2'", "C3'", "C4'", "O4'"]
 
-        # Iterate over each chain and residue ID to remove atoms from
-        for chain, residue_id in zip(chains, residue_ids):
-            idxs = np.where(
-                (self.chain == chain) & (self.residue_id == residue_id)
-            )[0]
+        # Attempt to cast residue_ids as integers
+        residue_ids = np.array(residue_ids, dtype=int)
+        chains = np.array(chains)
 
-            print(idxs)
+        # Loop through each pair to find indexes to target
+        idxs = []
+        for c, r in zip(chains, residue_ids):
+            # Find indices where both chain and residue_id match
+            idx = np.where((self.chain == c) & (self.residue_id == r))[0]
+            if len(idx) != 0:
+                idxs.extend(idx)
 
-            # Get the residue type
-            _is_amino_acid = self.residue[idxs[0]] in AMINO_ACID_RESIDUES
-            _is_rna = self.residue[idxs[0]] in RNA_RESIDUES
+        idxs = np.array(idxs)
 
-            # Which atoms to remove depends on the residue type
-            if _is_amino_acid:
-                atom_names = ["N", "CA", "C", "O"]
-            elif _is_rna:
-                atom_names = ["C1'", "C2'", "C3'", "C4'", "O4'"]
+        # Determine the residue type for each filtered index
+        _is_aa = np.isin(self.residue[idxs], AMINO_ACID_RESIDUES)
+        _is_rna = np.isin(self.residue[idxs], RNA_RESIDUES)
+        _is_removed_aa_atom = np.isin(self.atom[idxs], AMINO_ACID_ATOMS)
+        _is_removed_rna_atom = np.isin(self.atom[idxs], RNA_ATOMS)
 
-            for i in idxs:
-                if self.atom[i] in atom_names:
-                    removed_atom_idxs.append(i)
+        removed_atom_idxs = idxs[
+            (_is_aa & _is_removed_aa_atom) | (_is_rna & _is_removed_rna_atom)
+        ]
 
-        # Invert the indices if we want to keep the removed atoms
-        if return_removed_atoms:
+        # Invert the indices, if necessary to return FL - mask
+        if not return_removed_atoms:
             removed_atom_idxs = np.setdiff1d(
                 np.arange(self.atom.size), removed_atom_idxs
             )
@@ -346,8 +333,7 @@ class TemplateStructure:
         return removed_atom_idxs
 
     def _calculate_atomwise_potentials(self):
-        """Helper function for calculating scatterin
-        g potentials from model
+        """Helper function for calculating scattering potentials from model
 
         TODO: finish docstring
         """
@@ -368,7 +354,8 @@ class TemplateStructure:
         scattering_results = simulate_atomwise_scattering_potentials(
             atom_positions_zyx=atom_pos_zyx,
             atom_ids=atom_ids,
-            atom_b_factors=atom_b_factors,
+            # atom_b_factors=atom_b_factors,
+            atom_b_factors=torch.ones_like(atom_b_factors) * 60.0 * 0.25,
             sim_pixel_spacing=sim_pixel_spacing,
             sim_volume_shape=sim_volume_shape,
             lead_term=lead_term,
@@ -406,41 +393,173 @@ class TemplateStructure:
             final_volume=volume_upsampled,
         )
 
-        # Early return if no upsampling is requested
-        # TODO: Better code organization for this method
-        if (
-            self.upsampling == 1
-            or self.upsampled_pixel_size == self.pixel_size
-        ):
-            return volume_upsampled
-
-        volume_upsampled = fftshift_3d(volume_upsampled, rfft=False)
-        volume_upsampled_RFFT = torch.fft.rfftn(
+        # Convert to Fourier space for filtering
+        volume_upsampled = torch.fft.fftshift(
+            volume_upsampled, dim=(-3, -2, -1)
+        )
+        upsampled_volume_FFT = torch.fft.rfftn(
             volume_upsampled, dim=(-3, -2, -1)
         )
 
-        # TODO: Exposure filtering on upsampled volume
-
-        volume_RFFT = fourier_rescale_3d_force_size(
-            volume_fft=volume_upsampled_RFFT,
-            volume_shape=self.upsampled_volume_shape,
-            target_size=self.volume_shape[0],  # TODO: pass this arg as a tuple
-            rfft=True,
-            fftshift=False,
+        mtf_filename = "/home/mgiammar/MOSAICS/src/mosaics/reference_template/mtf_k2_300kV.star"  # noqa: E501
+        final_volume = apply_simulation_filters(
+            upsampled_volume_rfft=upsampled_volume_FFT,
+            upsampled_shape=self.upsampled_volume_shape,
+            final_shape=self.volume_shape,
+            upsampled_pixel_size=self.upsampled_pixel_size,
+            upsampling=self.upsampling,
+            dose_weighting=True,  # NOTE: Currently hardcoded
+            num_frames=30,  # NOTE: Currently hardcoded
+            fluence_per_frame=1.0,  # NOTE: Currently hardcoded
+            dose_B=-1,  # NOTE: Currently hardcoded
+            modify_signal=2,  # NOTE: Currently hardcoded
+            apply_dqe=True,  # NOTE: Currently hardcoded
+            mtf_filename=mtf_filename,  # NOTE: Currently hardcoded
         )
-
-        # TODO: MTF filtering on volume_RFFT
-
-        # Cropping and inverse RFFT
-        final_volume = torch.fft.irfftn(
-            volume_RFFT,
-            s=(
-                self.volume_shape[0],
-                self.volume_shape[0],
-                self.volume_shape[0],
-            ),
-            dim=(-3, -2, -1),
-        )
-        final_volume = ifftshift_3d(final_volume, rfft=False)
 
         return final_volume
+
+
+def _get_fourier_slices_rfft(
+    volume: torch.Tensor,
+    phi: torch.Tensor,
+    theta: torch.Tensor,
+    psi: torch.Tensor,
+    degrees: bool = True,
+):
+    """Helper function to get Fourier slices of a volume."""
+    shape = volume.shape
+    volume_rfft = fftshift_3d(volume, rfft=False)
+    volume_rfft = torch.fft.fftn(volume_rfft, dim=(-3, -2, -1))
+    volume_rfft = fftshift_3d(volume_rfft, rfft=True)
+
+    # TODO: Keep all computation in PyTorch
+    psi_np = psi.cpu().numpy()
+    theta_np = theta.cpu().numpy()
+    phi_np = phi.cpu().numpy()
+
+    angles = np.stack([phi_np, theta_np, psi_np], axis=-1)
+
+    rot_np = Rotation.from_euler("zyz", angles, degrees=degrees)
+    rot = torch.Tensor(rot_np.as_matrix())
+
+    # Use torch_fourier_slice to take the Fourier slice
+    fourier_slices = extract_central_slices_rfft_3d(
+        volume_rfft=volume_rfft,
+        image_shape=shape,
+        rotation_matrices=rot,
+    )
+
+    # Invert contrast to match image
+    fourier_slices = -fourier_slices
+
+    return fourier_slices
+
+
+def _rfft_slices_to_real_projections(
+    fourier_slices: torch.Tensor,
+) -> torch.Tensor:
+    """Convert Fourier slices to real-space projections.
+
+    NOTE: Assumes 2d or batched 2d input
+
+    TODO: docstring
+    """
+    fourier_slices = ifftshift_2d(fourier_slices, rfft=True)
+    projections = torch.fft.irfftn(fourier_slices, dim=(-2, -1))
+    projections = ifftshift_2d(projections, rfft=False)
+
+    return projections
+
+
+def get_real_space_projections(
+    volume: torch.Tensor,
+    phi: torch.Tensor,
+    theta: torch.Tensor,
+    psi: torch.Tensor,
+    degrees: bool = True,
+) -> torch.Tensor:
+    """Generate real-space projections of a volume using Fourier slicing.
+
+    Note that rotations are applied using the 'zyz' convention with Euler
+    angles phi, theta, and psi. The volume is assumed to be in real space.
+    Returned tensor is also in real space.
+
+    Parameters
+    ----------
+    volume : torch.Tensor
+        The volume to project, in real space.
+    phi : torch.Tensor
+        The phi angles of the projections, in radians.
+    theta : torch.Tensor
+        The theta angles of the projections, in radians.
+    psi : torch.Tensor
+
+    Returns
+    -------
+    torch.Tensor
+        The real-space projections with shape (n_projections, n_pixels,
+        n_pixels).
+
+    """
+    fourier_slices = _get_fourier_slices_rfft(volume, phi, theta, psi, degrees)
+
+    return _rfft_slices_to_real_projections(fourier_slices)
+
+
+def get_real_space_projections_ctf(
+    volume: torch.Tensor,
+    phi: torch.Tensor,
+    theta: torch.Tensor,
+    psi: torch.Tensor,
+    defocus1: torch.Tensor,
+    defocus2: torch.Tensor,
+    astigmatism_angle: torch.Tensor,
+    degrees: bool = True,
+) -> torch.Tensor:
+    """Construct real-space projections with CTF and whitening applied.
+
+    Parameters
+    ----------
+    volume : torch.Tensor
+        The volume to project, in real space.
+    phi : torch.Tensor
+        The phi angles of the projections.
+    theta : torch.Tensor
+        The theta angles of the projections.
+    psi : torch.Tensor
+        The psi angles of the projections.
+    defocus1 : torch.Tensor
+        The defocus value for the first CTF filter, in Angstroms.
+    defocus2 : torch.Tensor
+        The defocus value for the second CTF filter, in Angstroms.
+    astigmatism_angle : torch.Tensor
+        The angle of the astigmatism, in degrees
+    degrees : bool, optional
+        Whether the angles are in degrees or radians, by default True.
+    """
+    fourier_slices = _get_fourier_slices_rfft(volume, phi, theta, psi, degrees)
+
+    # Calculate the CTF filters for each slice
+    defocus = (defocus1 + defocus2) / 2
+    astigmatism = (defocus1 - defocus2) / 2
+    ctf_filters = calculate_ctf_2d(
+        defocus=defocus,
+        astigmatism=astigmatism,
+        astigmatism_angle=astigmatism_angle,
+        voltage=300,  # TODO: unhardcode these
+        spherical_aberration=2.7,
+        amplitude_contrast=0.07,
+        b_factor=0,
+        phase_shift=0.0,
+        pixel_size=1.06,
+        image_shape=(volume.shape[0], volume.shape[0]),
+        rfft=True,
+        fftshift=False,
+    )
+    ctf_filters = fftshift_2d(ctf_filters, rfft=True)
+
+    # Apply the CTF filters to the Fourier slices
+    fourier_slices = fourier_slices * ctf_filters
+
+    return _rfft_slices_to_real_projections(fourier_slices)
