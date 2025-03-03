@@ -1,41 +1,38 @@
-# See https://pre-commit.com for more information
-# See https://pre-commit.com/hooks.html for more hooks
+# enable pre-commit.ci at https://pre-commit.ci/
+# it adds:
+# 1. auto fixing pull requests
+# 2. auto updating the pre-commit configuration
+ci:
+  autoupdate_schedule: monthly
+  autofix_commit_msg: "style(pre-commit.ci): auto fixes [...]"
+  autoupdate_commit_msg: "ci(pre-commit.ci): autoupdate"
+
 repos:
--   repo: https://github.com/psf/black
-    rev: 24.10.0
+  - repo: https://github.com/abravalheri/validate-pyproject
+    rev: v0.22
     hooks:
-    -   id: black
-        args: [--line-length=79]
+      - id: validate-pyproject
 
--   repo: https://github.com/pre-commit/mirrors-isort
-    rev: v5.10.1
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.24.6
     hooks:
-    -   id: isort
-        args: [--profile, black, --force-single-line-imports]
+      - id: typos
+        args:  # omitting --write-changes
+          - "--force-exclude"
+          # - "--config=_typos.toml"
 
--   repo: https://github.com/pycqa/flake8
-    rev: 6.0.0
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.2
     hooks:
-    -   id: flake8
-        additional_dependencies:
-        - flake8-unused-arguments
-        # - flake8-complexity
-        # args: [--max-complexity=10]
-        args: ['--extend-ignore=E203']
+      - id: ruff
+        args: [--fix]  # may also add '--unsafe-fixes'
+      - id: ruff-format
 
--   repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v0.910
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
     hooks:
-    -   id: mypy
--   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
-    hooks:
-    -   id: trailing-whitespace
-    -   id: end-of-file-fixer
-    -   id: check-yaml
-    -   id: check-added-large-files
-
-
-
-# Excluding the docs/_static folder from the pre-commit checks
-exclude: docs/_static/
+      - id: mypy
+        files: "^src/"
+        # # you have to add the things you want to type check against here
+        # additional_dependencies:
+        #   - numpy

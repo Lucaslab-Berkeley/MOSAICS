@@ -1,8 +1,0 @@
-numpy
-scipy
-mrcfile
-matplotlib
-
-# Development requirements
-pytest
-pre-commit
