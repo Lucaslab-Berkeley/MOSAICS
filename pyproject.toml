@@ -46,6 +46,7 @@ dependencies = [
     "roma",
     "tqdm",
     "ttsim3d @ git+https://github.com/mgiammar/ttsim3d.git@mdg_updates_for_mosaics",
+    "Leopard-EM"
 ]
 
 [tool.hatch.metadata]
@@ -147,7 +148,7 @@ exclude_lines = [
 ]
 
 [tool.coverage.run]
-source = ["/src/leopard-em"]
+source = ["/src/mosaics"]
 
 # https://github.com/mgedmin/check-manifest#configuration
 # add files that you want check-manifest to explicitly ignore here
