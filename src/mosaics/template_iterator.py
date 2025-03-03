@@ -112,9 +112,6 @@ class BaseTemplateIterator(BaseModel):
 
     structure_df: pd.DataFrame  # NOTE: Comes from Simulator object
 
-    # Need to setup a data structure to map from chain, residue paris to atom indices
-    # and the types of atoms to remove (this is already set up, but want to simplify).
-
     @field_validator("residue_types")  # type: ignore
     def _validate_residue_types(cls, v):
         if not v:

@@ -1,11 +1,13 @@
 """Manager class for running MOSAICS."""
 
+import mmdf
+import yaml  # type: ignore
 from leopard_em.pydantic_models import ParticleStack
 from pydantic import BaseModel
 from ttsim3d.models import Simulator
 
-from .mosaics_result import MosaicsResult
-from .template_iterator import BaseTemplateIterator
+# from .template_iterator import BaseTemplateIterator
+from .template_iterator import ResidueTemplateIterator
 
 
 class MosaicsManager(BaseModel):
@@ -30,8 +32,31 @@ class MosaicsManager(BaseModel):
 
     particle_stack: ParticleStack  # comes from Leopard-EM
     simulator: Simulator  # comes from ttsim3d
-    template_iterator: BaseTemplateIterator
-    mosaics_result: MosaicsResult
+    template_iterator: ResidueTemplateIterator
+    # mosaics_result: MosaicsResult
+
+    @classmethod
+    def from_yaml(cls, yaml_path: str) -> "MosaicsManager":
+        """Create a MosaicsManager instance from a YAML file.
+
+        Parameters
+        ----------
+        yaml_path : str
+            Path to the YAML file containing the configuration for the MosaicsManager.
+
+        Returns
+        -------
+        MosaicsManager
+            Instance of MosaicsManager created from the YAML file.
+        """
+        with open(yaml_path) as yaml_f:
+            data = yaml.load(yaml_f, Loader=yaml.SafeLoader)
+
+        # Load the pdb file from the Simulator into a DataFrame
+        pdb_df = mmdf.read(data["simulator"]["pdb_filepath"])
+        data["template_iterator"]["structure_df"] = pdb_df
+
+        return cls(**data)
 
     def run_mosaics(self) -> None:
         """Run the MOSAICS program.
