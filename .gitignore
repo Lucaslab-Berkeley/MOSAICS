@@ -1,6 +1,6 @@
 .DS_Store
 
-# Byte-compiled and package Pthon files
+# Byte-compiled and package Python files
 *.egg-info
 __pycache__
 
@@ -10,3 +10,4 @@ docs/_build
 data
 scratch_notebooks
 *.tmp
+.vscode

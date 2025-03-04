@@ -173,6 +173,9 @@ class ResidueTemplateIterator(BaseTemplateIterator):
     def __init__(self, **data: Any):
         super().__init__(**data)
 
+        # Add dummy column to keep track of the original indexes
+        self.structure_df["original_index"] = self.structure_df.index
+
         # The unique method should retain default order
         self._chain_order = self.structure_df["chain"].unique()
         if self.randomize_chain_order:
@@ -281,10 +284,14 @@ class ResidueTemplateIterator(BaseTemplateIterator):
 
             # Merge the DataFrame to keep only positions where the chain and residue
             # pairs match the current window
+            # NOTE: When the dataframe is merged, the row indexes are overwritten...
+            # We use a dummy column to keep track of the original indexes by re-indexing
+            # the dataframe after the merge.
             merge_df = pd.DataFrame(
                 {"chain": chains_window, "residue_id": residues_window}
             )
             df_window = self.structure_df.merge(merge_df)
+            df_window = df_window.set_index("original_index")
 
             # Get the atom indexes for the current window (atoms that should be removed)
             atom_idxs = df_window[df_window["atom"].isin(remove_atoms)].index
