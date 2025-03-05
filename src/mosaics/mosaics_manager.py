@@ -11,6 +11,8 @@ from pydantic import BaseModel
 from torch_fourier_filter.ctf import calculate_ctf_2d
 from ttsim3d.models import Simulator
 
+from .mosaics_result import MosaicsResult
+
 # from .template_iterator import BaseTemplateIterator
 from .template_iterator import ResidueTemplateIterator
 
@@ -31,15 +33,13 @@ class MosaicsManager(BaseModel):
     template_iterator : TemplateIterator
         Iteration configuration model for describing how to iterate over the reference
         structure.
-    mosaics_results : MosaicsResults
-        Results model for storing the output of the MOSAICS program.
     """
 
     particle_stack: ParticleStack  # comes from Leopard-EM
     simulator: Simulator  # comes from ttsim3d
     template_iterator: ResidueTemplateIterator
     preprocessing_filters: PreprocessingFilters
-    # mosaics_result: MosaicsResult
+    sim_removed_atoms_only: bool = False
 
     @classmethod
     def from_yaml(cls, yaml_path: str) -> "MosaicsManager":
@@ -149,7 +149,7 @@ class MosaicsManager(BaseModel):
 
         return projective_filters * ctf_filters
 
-    def run_mosaics(self, gpu_id: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def run_mosaics(self, gpu_id: int) -> MosaicsResult:
         """Run the MOSAICS program.
 
         TODO: Complete docstring
@@ -179,47 +179,85 @@ class MosaicsManager(BaseModel):
         rot_mat = rot_mat.to(device)
         projective_filters = projective_filters.to(device)
 
-        # First, calculate the default cross-correlation (full-length template)
-        volume = self.simulator.run(gpu_ids=gpu_id)
-        volume = torch.fft.fftshift(volume)
-        volume_dft = torch.fft.rfftn(volume, dim=(-3, -2, -1))
-        volume_dft = torch.fft.fftshift(volume_dft, dim=(-3, -2))
+        #####################################################
+        ### Default (full-length) model cross-correlation ###
+        #####################################################
+
+        default_volume = self.simulator.run(gpu_ids=gpu_id)
+        default_volume = torch.fft.fftshift(default_volume)
+        default_volume_dft = torch.fft.rfftn(default_volume, dim=(-3, -2, -1))
+        default_volume_dft = torch.fft.fftshift(default_volume_dft, dim=(-3, -2))
 
         default_cc = cross_correlate_particle_stack(
             particle_stack_dft=particle_images_dft,
-            template_dft=volume_dft,
+            template_dft=default_volume_dft,
             rotation_matrices=rot_mat,
             projective_filters=projective_filters,
             mode="valid",
             batch_size=2048,
         )
+        default_cc = torch.max(default_cc.view(default_cc.shape[0], -1), dim=-1).values
+
+        ###################################################
+        ### Iteration over alternate (truncated) models ###
+        ###################################################
 
         # First pass to calculate the number of iterations
-        atom_idx_iterator = self.template_iterator.atom_idx_iter(inverted=False)
+        atom_idx_iterator = self.template_iterator.atom_idx_iter()
         num_iters = sum(1 for _ in atom_idx_iterator)
 
-        # Now iterate over the alternate structures and calculate the cross-correlation
         # NOTE: When the inverted flag is set to True, the iterator will return the
-        # indices of the atoms that should NOT be removed.
-        alternate_ccs = []
-        atom_idx_iterator = self.template_iterator.atom_idx_iter(inverted=True)
-        for atom_indices in tqdm.tqdm(atom_idx_iterator, total=num_iters):
-            alt_volume = self.simulator.run(gpu_ids=gpu_id, atom_indices=atom_indices)
-            alt_volume = torch.fft.fftshift(alt_volume)
-            # alt_volume = volume - alt_volume
-            alt_volume_dft = torch.fft.rfftn(alt_volume, dim=(-3, -2, -1))
-            alt_volume_dft = torch.fft.fftshift(alt_volume_dft, dim=(-3, -2))
+        # indices of the atoms that should NOT be removed. This is opposite of the
+        # the 'sim_removed_atoms_only' flag.
+        inverted = not self.sim_removed_atoms_only
+        atom_idx_iterator = self.template_iterator.atom_idx_iter(inverted=inverted)
+        chain_residue_iterator = self.template_iterator.chain_residue_iter()
 
+        alternate_ccs = []
+        alternate_chain_residue_pairs = []
+        for chain_residue_pairs, atom_indices in tqdm.tqdm(
+            zip(chain_residue_iterator, atom_idx_iterator),
+            total=num_iters,
+            desc="Iterating over alternate models",
+        ):
+            alternate_volume = self.simulator.run(
+                gpu_ids=gpu_id, atom_indices=atom_indices
+            )
+            alternate_volume = torch.fft.fftshift(alternate_volume)
+            alternate_volume_dft = torch.fft.rfftn(alternate_volume, dim=(-3, -2, -1))
+            alternate_volume_dft = torch.fft.fftshift(
+                alternate_volume_dft, dim=(-3, -2)
+            )
+
+            # Recalculate the cross-correlation with the alternate model
+            # and take the maximum value over space
             alt_cc = cross_correlate_particle_stack(
                 particle_stack_dft=particle_images_dft,
-                template_dft=alt_volume_dft,
+                template_dft=alternate_volume_dft,
                 rotation_matrices=rot_mat,
                 projective_filters=projective_filters,
                 mode="valid",
                 batch_size=2048,
             )
-            alternate_ccs.append(alt_cc)
+            alt_cc = torch.max(alt_cc.view(default_cc.shape[0], -1), dim=-1).values
 
+            alternate_ccs.append(alt_cc)
+            alternate_chain_residue_pairs.append(
+                [(c, r) for c, r in zip(chain_residue_pairs[0], chain_residue_pairs[1])]
+            )
+
+        # Stack the alternate cross-correlation values into a single tensor
         alternate_ccs = torch.stack(alternate_ccs, dim=0)
 
-        return default_cc, alternate_ccs
+        # Create the metadata for the alternate chain residues
+        alternate_chain_residue_metadata = {
+            f"alt_cc_{i}": chain_residue_pairs
+            for i, chain_residue_pairs in enumerate(alternate_chain_residue_pairs)
+        }
+
+        return MosaicsResult(
+            default_cross_correlation=default_cc.cpu().numpy(),
+            alternate_cross_correlations=alternate_ccs.cpu().numpy(),  # type: ignore
+            alternate_chain_residue_metadata=alternate_chain_residue_metadata,
+            sim_removed_atoms_only=self.sim_removed_atoms_only,
+        )

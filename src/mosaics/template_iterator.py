@@ -245,6 +245,31 @@ class ResidueTemplateIterator(BaseTemplateIterator):
 
         return unique_chain_res_id.to_records(index=False).tolist()  # type: ignore
 
+    def chain_residue_iter(self) -> Iterator[tuple[list[str], list[int]]]:
+        """Generator for iterating over the chain, residue pairs in the structure.
+
+        Yields
+        ------
+        tuple[str, int]
+            Tuple of (chain, residue_id) pairs in the structure.
+        """
+        # Get the unique chain, residue pairs in order
+        chain_res_pairs = self.chain_residue_pairs()
+        chains = np.array([chain for chain, _ in chain_res_pairs])
+        residues = np.array([residue for _, residue in chain_res_pairs])
+
+        window_iter = sliding_window_iterator(
+            length=len(chain_res_pairs),
+            window_width=self.num_residues_removed,
+            step_size=self.residue_increment,
+        )
+
+        # Iterate over the chain, residue pairs and yield the pairs
+        for window in window_iter:
+            chains_window = chains[window]
+            residues_window = residues[window]
+            yield chains_window, residues_window
+
     def atom_idx_iter(self, inverted: bool = False) -> Iterator[torch.Tensor]:
         """Generator for iterating over atom indexes to keep in each structure.
 
@@ -266,22 +291,10 @@ class ResidueTemplateIterator(BaseTemplateIterator):
         if "dna" in self.residue_types:
             remove_atoms.extend(self.dna_atoms)
 
-        # Get the unique chain, residue pairs in order
-        chain_res_pairs = self.chain_residue_pairs()
-        chains = np.array([chain for chain, _ in chain_res_pairs])
-        residues = np.array([residue for _, residue in chain_res_pairs])
-
-        window_iter = sliding_window_iterator(
-            length=len(chain_res_pairs),
-            window_width=self.num_residues_removed,
-            step_size=self.residue_increment,
-        )
+        cr_iter = self.chain_residue_iter()
 
         # Iterate over the chain, residue pairs and yield the atom indexes
-        for window in window_iter:
-            chains_window = chains[window]
-            residues_window = residues[window]
-
+        for chains_window, residues_window in cr_iter:
             # Merge the DataFrame to keep only positions where the chain and residue
             # pairs match the current window
             # NOTE: When the dataframe is merged, the row indexes are overwritten...
