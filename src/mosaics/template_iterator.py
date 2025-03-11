@@ -2,7 +2,7 @@
 
 from abc import abstractmethod
 from collections.abc import Iterator
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, ClassVar
 
 import numpy as np
 import pandas as pd
@@ -76,6 +76,19 @@ def sliding_window_iterator(
         yield np.arange(i, min(i + window_width, length))
 
 
+def instantiate_template_iterator(data: dict) -> "BaseTemplateIterator":
+    """Factory function for instantiating a template iterator object."""
+    iterator_type = data.get("type", None)
+    if iterator_type == "random":
+        return RandomTemplateIterator(**data)
+    elif iterator_type == "chain":
+        return ChainTemplateIterator(**data)
+    elif iterator_type == "residue":
+        return ResidueTemplateIterator(**data)
+    else:
+        raise ValueError(f"Invalid template iterator type: {iterator_type}")
+
+
 class BaseTemplateIterator(BaseModel):
     """Base class for defining template iterator configurations.
 
@@ -101,6 +114,8 @@ class BaseTemplateIterator(BaseModel):
     """
 
     model_config: ConfigDict = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    type: ClassVar[Literal["random", "chain", "residue"]]
 
     num_residues_removed: Annotated[int, Field(gt=0)]
     residue_increment: Annotated[int, Field(gt=0)]
@@ -149,6 +164,61 @@ class RandomTemplateIterator(BaseTemplateIterator):
 
     type: Literal["random"] = "random"
     coherent_removal: bool = True
+
+
+class ChainTemplateIterator(BaseTemplateIterator):
+    """Iterates over each chain in the structure and remove it in its entirety.
+
+    NOTE: Parent class attributes from BaseTemplateIterator are *not* used besides the
+    structure_df attribute. All atoms from a chain are completely removed.
+
+    Attributes
+    ----------
+    type : Literal["chain"]
+        Discriminator field for differentiating between template iterator types.
+    """
+
+    type: Literal["chain"] = "chain"
+
+    def chain_residue_iter(self) -> Iterator[tuple[str, list[int]]]:
+        """Generator for iterating over the chain, residue pairs in the structure.
+
+        Since this class iterates over each chain individually, each iteration will
+        yield a single chain with all of its residue ids.
+
+        Yields
+        ------
+        tuple[str, int]
+            Tuple of (chain, residue_id) pairs in the structure.
+        """
+        unique_chain_ids = self.structure_df["chain"].unique()
+        for chain_id in unique_chain_ids:
+            residue_ids = self.structure_df[self.structure_df["chain"] == chain_id][
+                "residue_id"
+            ].unique()
+            residue_ids = residue_ids.tolist()
+            yield chain_id, residue_ids
+
+    def atom_idx_iter(self, inverted: bool = False) -> Iterator[torch.Tensor]:
+        """Generator for iterating over atom indexes to keep in each structure.
+
+        Parameters
+        ----------
+        inverted : bool
+            If 'True', return the indexes of atoms to remove rather than keep.
+
+        Yields
+        ------
+        torch.Tensor
+            Tensor of indexes for the atoms to remove.
+        """
+        unique_chain_ids = self.structure_df["chain"].unique()
+        for chain_id in unique_chain_ids:
+            atom_idxs = self.structure_df[self.structure_df["chain"] == chain_id].index
+            if inverted:
+                atom_idxs = np.setdiff1d(np.arange(len(self.structure_df)), atom_idxs)
+
+            yield torch.tensor(atom_idxs)
 
 
 class ResidueTemplateIterator(BaseTemplateIterator):

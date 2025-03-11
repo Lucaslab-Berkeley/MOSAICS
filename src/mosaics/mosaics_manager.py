@@ -13,8 +13,7 @@ from ttsim3d.models import Simulator
 
 from .mosaics_result import MosaicsResult
 
-# from .template_iterator import BaseTemplateIterator
-from .template_iterator import ResidueTemplateIterator
+from .template_iterator import BaseTemplateIterator, instantiate_template_iterator
 
 
 class MosaicsManager(BaseModel):
@@ -37,7 +36,7 @@ class MosaicsManager(BaseModel):
 
     particle_stack: ParticleStack  # comes from Leopard-EM
     simulator: Simulator  # comes from ttsim3d
-    template_iterator: ResidueTemplateIterator
+    template_iterator: BaseTemplateIterator
     preprocessing_filters: PreprocessingFilters
     sim_removed_atoms_only: bool = False
 
@@ -61,6 +60,10 @@ class MosaicsManager(BaseModel):
         # Load the pdb file from the Simulator into a DataFrame
         pdb_df = mmdf.read(data["simulator"]["pdb_filepath"])
         data["template_iterator"]["structure_df"] = pdb_df
+
+        # Create the template iterator using the factory method
+        template_iterator = instantiate_template_iterator(data["template_iterator"])
+        data["template_iterator"] = template_iterator
 
         return cls(**data)
 
@@ -224,6 +227,14 @@ class MosaicsManager(BaseModel):
                 gpu_ids=gpu_id, atom_indices=atom_indices
             )
             alternate_volume = torch.fft.fftshift(alternate_volume)
+
+            # Subtract the alternate_volume from the default_volume if
+            # self.sim_only_removed_atoms is set.
+            # This is because when inverted, then only the atoms which should be
+            # removed get simulated rather than the atoms which should be kept.
+            if self.sim_removed_atoms_only:
+                alternate_volume = default_volume - alternate_volume
+
             alternate_volume_dft = torch.fft.rfftn(alternate_volume, dim=(-3, -2, -1))
             alternate_volume_dft = torch.fft.fftshift(
                 alternate_volume_dft, dim=(-3, -2)
@@ -257,6 +268,7 @@ class MosaicsManager(BaseModel):
 
         return MosaicsResult(
             default_cross_correlation=default_cc.cpu().numpy(),
+            template_iterator_type=self.template_iterator.type,
             alternate_cross_correlations=alternate_ccs.cpu().numpy(),  # type: ignore
             alternate_chain_residue_metadata=alternate_chain_residue_metadata,
             sim_removed_atoms_only=self.sim_removed_atoms_only,

@@ -15,6 +15,8 @@ class MosaicsResult(BaseModel):
     ----------
     default_cross_correlation : np.ndarray
         The default (non-truncated model) cross-correlation values.
+    template_iterator_type : str
+        The type of template iterator used for the alternate models.
     alternate_cross_correlations : np.ndarray
         The cross-correlation values for the alternate (truncated) models.
     alternate_chain_residue_metadata : dict[str, list[tuple[str, int]]]
@@ -31,6 +33,7 @@ class MosaicsResult(BaseModel):
     model_config: ConfigDict = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     default_cross_correlation: np.ndarray
+    template_iterator_type: str
     alternate_cross_correlations: np.ndarray
     alternate_chain_residue_metadata: Optional[dict[str, list[tuple[str, int]]]] = None
     sim_removed_atoms_only: bool = False
@@ -72,7 +75,14 @@ class MosaicsResult(BaseModel):
         )
 
         # Add the alternate cross-correlations values to the dataframe
-        df[[f"alt_cc_{i}" for i in range(num_alts)]] = self.alternate_cross_correlations
+        df_alt = pd.DataFrame(
+            self.alternate_cross_correlations.T,
+            index=df.index,
+            columns=[f"alt_cc_{i}" for i in range(num_alts)],
+        )
+        df = pd.concat([df, df_alt], axis=1)
+
+        return df
 
     def export_to_json(
         self,
@@ -98,6 +108,7 @@ class MosaicsResult(BaseModel):
         json_data = {
             "csv_path": csv_path,
             "sim_removed_atoms_only": self.sim_removed_atoms_only,
+            "alternate_template_iterator_type": self.template_iterator_type,
             "alternate_chain_residue_metadata": self.alternate_chain_residue_metadata,
         }
 
