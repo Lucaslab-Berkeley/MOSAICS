@@ -72,10 +72,7 @@ class MosaicsResult(BaseModel):
         )
 
         # Add the alternate cross-correlations values to the dataframe
-        for i in range(num_alts):
-            df[f"alt_cc_{i}"] = self.alternate_cross_correlations[i]
-
-        return df
+        df[[f"alt_cc_{i}" for i in range(num_alts)]] = self.alternate_cross_correlations
 
     def export_to_json(
         self,
