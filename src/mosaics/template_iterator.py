@@ -1,8 +1,8 @@
 """Module for different ways of generating alternate templates for comparison."""
 
 from abc import abstractmethod
-from collections.abc import Iterator
-from typing import Annotated, Any, Literal, ClassVar
+from collections.abc import Iterator, Sequence
+from typing import Annotated, Any, ClassVar, Literal
 
 import numpy as np
 import pandas as pd
@@ -37,6 +37,9 @@ AMINO_ACID_RESIDUES = [
 ]
 RNA_RESIDUES = ["A", "C", "G", "U", "N"]
 DNA_RESIDUES = ["A", "C", "G", "T", "N"]
+
+# TODO: Make this a lookup table, move to a separate file, or use external package
+MASS_DICT = {"H": 1.01, "C": 12.01, "N": 14.01, "O": 16.00, "S": 32.06, "P": 30.97}
 
 
 def sliding_window_iterator(
@@ -134,6 +137,19 @@ class BaseTemplateIterator(BaseModel):
         return v
 
     @abstractmethod
+    def chain_residue_iter(self) -> Iterator[tuple[list[str], list[int]]]:
+        """Iterator over the chain, residue pairs removed in each alternate template.
+
+        Yields
+        ------
+        tuple[list[str], list[int]]
+            List of chains and list of residue ids removed at each iteration.
+            The ordering of these lists correspond to each other, example
+            (['A', 'A', 'B'], [1, 2, 3]) means residues 1 & 2 were removed from
+            chain 'A' and the 3rd was removed from chain 'B'.
+        """
+
+    @abstractmethod
     def atom_idx_iter(self, inverted: bool = False) -> Iterator[torch.Tensor]:
         """Generator for iterating over atom indexes to keep in each structure.
 
@@ -149,6 +165,37 @@ class BaseTemplateIterator(BaseModel):
         """
         raise NotImplementedError
 
+    def get_default_template_mass(self) -> float:
+        """Get the mass (in amu) of the default template structure."""
+        total_mass = 0
+
+        atom_counts = self.structure_df["element"].value_counts()
+        for atom, count in atom_counts.items():
+            if atom not in MASS_DICT:
+                raise ValueError(f"Unknown atom type: {atom}")
+
+            mass = MASS_DICT[atom]
+            total_mass += mass * count
+
+        return total_mass
+
+    def get_alternate_template_mass(self) -> Sequence[float]:
+        """Get the mass (in amu) of all the alternate template structures."""
+        alt_masses = []
+        for atom_idxs in self.atom_idx_iter(inverted=False):
+            atom_counts = self.structure_df.iloc[atom_idxs]["element"].value_counts()
+            total_mass = 0
+            for atom, count in atom_counts.items():
+                if atom not in MASS_DICT:
+                    raise ValueError(f"Unknown atom type: {atom}")
+
+                mass = MASS_DICT[atom]
+                total_mass += mass * count
+
+            alt_masses.append(total_mass)
+
+        return alt_masses
+
 
 class RandomTemplateIterator(BaseTemplateIterator):
     """Template iterator for removing random atoms from a pdb structure.
@@ -162,7 +209,7 @@ class RandomTemplateIterator(BaseTemplateIterator):
         from residue [i, i+1, i+2, ...] rather than random indices. Default is 'True'.
     """
 
-    type: Literal["random"] = "random"
+    type: ClassVar[Literal["random"]] = "random"
     coherent_removal: bool = True
 
 
@@ -178,9 +225,9 @@ class ChainTemplateIterator(BaseTemplateIterator):
         Discriminator field for differentiating between template iterator types.
     """
 
-    type: Literal["chain"] = "chain"
+    type: ClassVar[Literal["chain"]] = "chain"
 
-    def chain_residue_iter(self) -> Iterator[tuple[str, list[int]]]:
+    def chain_residue_iter(self) -> Iterator[tuple[list[str], list[int]]]:
         """Generator for iterating over the chain, residue pairs in the structure.
 
         Since this class iterates over each chain individually, each iteration will
@@ -197,7 +244,8 @@ class ChainTemplateIterator(BaseTemplateIterator):
                 "residue_id"
             ].unique()
             residue_ids = residue_ids.tolist()
-            yield chain_id, residue_ids
+
+            yield [chain_id] * len(residue_ids), residue_ids
 
     def atom_idx_iter(self, inverted: bool = False) -> Iterator[torch.Tensor]:
         """Generator for iterating over atom indexes to keep in each structure.
@@ -235,7 +283,7 @@ class ResidueTemplateIterator(BaseTemplateIterator):
         If 'True', randomize the order of chains in the structure. Default is 'False'.
     """
 
-    type: Literal["residue"] = "residue"
+    type: ClassVar[Literal["residue"]] = "residue"
     randomize_chain_order: bool = False
 
     _chain_order: list[str]

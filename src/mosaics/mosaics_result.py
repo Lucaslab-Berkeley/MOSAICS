@@ -15,10 +15,15 @@ class MosaicsResult(BaseModel):
     ----------
     default_cross_correlation : np.ndarray
         The default (non-truncated model) cross-correlation values.
-    template_iterator_type : str
-        The type of template iterator used for the alternate models.
     alternate_cross_correlations : np.ndarray
         The cross-correlation values for the alternate (truncated) models.
+    mass_adjustment_factors : np.ndarray
+        The mass adjustment factor, which is calculated as the ratio of the mass of the
+        truncated model to the mass of the default model, for each alternate model.
+        The index of the mass adjustment factor corresponds to the index of the
+        alternate_cross_correlations array.
+    template_iterator_type : str
+        The type of template iterator used for the alternate models.
     alternate_chain_residue_metadata : dict[str, list[tuple[str, int]]]
         The metadata for the alternate chain residues. Keys will correspond to the
         alternate model index, and the values will be a list of tuples containing the
@@ -33,8 +38,9 @@ class MosaicsResult(BaseModel):
     model_config: ConfigDict = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     default_cross_correlation: np.ndarray
-    template_iterator_type: str
     alternate_cross_correlations: np.ndarray
+    mass_adjustment_factors: np.ndarray
+    template_iterator_type: str
     alternate_chain_residue_metadata: Optional[dict[str, list[tuple[str, int]]]] = None
     sim_removed_atoms_only: bool = False
 
@@ -108,6 +114,7 @@ class MosaicsResult(BaseModel):
         json_data = {
             "csv_path": csv_path,
             "sim_removed_atoms_only": self.sim_removed_atoms_only,
+            "mass_adjustment_factors": self.mass_adjustment_factors.tolist(),
             "alternate_template_iterator_type": self.template_iterator_type,
             "alternate_chain_residue_metadata": self.alternate_chain_residue_metadata,
         }
