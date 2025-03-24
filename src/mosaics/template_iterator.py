@@ -9,9 +9,16 @@ import pandas as pd
 import torch
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+#########################################################
+### Data for residue/atom identification in PDB files ###
+#########################################################
+
+# These are the default atoms to remove (under "atom" column in df loaded from PDB)
 DEFAULT_AMINO_ACID_ATOMS = ["N", "CA", "C", "O"]
 DEFAULT_RNA_ATOMS = ["C1'", "C2'", "C3'", "C4'", "O4'"]
 DEFAULT_DNA_ATOMS = ["C1'", "C2'", "C3'", "C4'", "O4'"]
+
+# Names in the "residue" column of the PDB file which correspond to the residue types
 AMINO_ACID_RESIDUES = [
     "ALA",
     "ARG",
@@ -38,8 +45,114 @@ AMINO_ACID_RESIDUES = [
 RNA_RESIDUES = ["A", "C", "G", "U", "N"]
 DNA_RESIDUES = ["A", "C", "G", "T", "N"]
 
+# All atoms for each corresponding residue type. These lists can be used to pass
+# a string "all" to the atom_types parameter in the template iterator config to remove
+# all atoms from the residue type.
+ALL_AMINO_ACID_ATOMS = [
+    "N",
+    "CA",
+    "C",
+    "O",
+    "CB",
+    "CG",
+    "CD",
+    "CE",
+    "NZ",
+    "OG",
+    "CD1",
+    "CD2",
+    "CE1",
+    "CE2",
+    "CZ",
+    "OH",
+    "NE",
+    "NH1",
+    "NH2",
+    "OE1",
+    "NE2",
+    "OG1",
+    "CG2",
+    "OE2",
+    "OD1",
+    "OD2",
+    "CG1",
+    "ND1",
+    "ND2",
+    "SG",
+    "NE1",
+    "CE3",
+    "CZ2",
+    "CZ3",
+    "CH2",
+    "SD",
+    "OXT",
+]
+ALL_RNA_ATOMS = [
+    "P",
+    "OP1",
+    "OP2",
+    "O5'",
+    "C5'",
+    "C4'",
+    "O4'",
+    "C3'",
+    "O3'",
+    "C2'",
+    "O2'",
+    "C1'",
+    "N1",
+    "C2",
+    "O2",
+    "N3",
+    "C4",
+    "O4",
+    "C5",
+    "C6",
+    "N9",
+    "C8",
+    "N7",
+    "O6",
+    "N2",
+    "N6",
+    "N4",
+]
+ALL_DNA_ATOMS = [
+    "O5'",
+    "C5'",
+    "C4'",
+    "O4'",
+    "C3'",
+    "O3'",
+    "C2'",
+    "C1'",
+    "N1",
+    "C2",
+    "O2",
+    "N3",
+    "C4",
+    "N4",
+    "C5",
+    "C6",
+    "P",
+    "OP1",
+    "OP2",
+    "N9",
+    "C8",
+    "N7",
+    "O6",
+    "N2",
+    "N6",
+    "O4",
+    "C7",
+]
+
 # TODO: Make this a lookup table, move to a separate file, or use external package
 MASS_DICT = {"H": 1.01, "C": 12.01, "N": 14.01, "O": 16.00, "S": 32.06, "P": 30.97}
+
+
+###############################################
+### Helper functions for template iterators ###
+###############################################
 
 
 def sliding_window_iterator(
@@ -81,7 +194,7 @@ def sliding_window_iterator(
 
 def instantiate_template_iterator(data: dict) -> "BaseTemplateIterator":
     """Factory function for instantiating a template iterator object."""
-    iterator_type = data.get("type", None)
+    iterator_type = data.pop("type", None)
     if iterator_type == "random":
         return RandomTemplateIterator(**data)
     elif iterator_type == "chain":
@@ -114,14 +227,24 @@ class BaseTemplateIterator(BaseModel):
         Default is ['C1', 'C2', 'C3', 'C4', 'O4'].
     structure_df : pd.DataFrame
         Underlying Pandas DataFrame for the PDB model.
+
+    Methods
+    -------
+    chain_residue_iter()
+        Iterator over the chain, residue pairs removed in each alternate template.
+        Must be implemented by subclasses.
+    atom_idx_iter(inverted=False)
+        Generator for iterating over atom indexes to keep in each structure.
+        Must be implemented by subclasses.
+    get_default_template_mass()
+        Get the mass (in amu) of the default template structure.
+    get_alternate_template_mass()
+        Get the mass (in amu) of all the alternate template structures as a list.
     """
 
     model_config: ConfigDict = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     type: ClassVar[Literal["random", "chain", "residue"]]
-
-    num_residues_removed: Annotated[int, Field(gt=0)]
-    residue_increment: Annotated[int, Field(gt=0)]
 
     residue_types: list[Literal["amino_acid", "rna", "dna"]]
     amino_acid_atoms: list[str] = DEFAULT_AMINO_ACID_ATOMS
@@ -134,6 +257,27 @@ class BaseTemplateIterator(BaseModel):
     def _validate_residue_types(cls, v):
         if not v:
             raise ValueError("At least one residue type must be specified.")
+        return v
+
+    @field_validator("amino_acid_atoms", mode="before")  # type: ignore
+    def _validate_amino_acid_atoms(cls, v):
+        """Validator to convert "all" to the full list of amino acid atoms."""
+        if v == ["all"]:
+            return ALL_AMINO_ACID_ATOMS
+        return v
+
+    @field_validator("rna_atoms", mode="before")  # type: ignore
+    def _validate_rna_atoms(cls, v):
+        """Validator to convert "all" to the full list of RNA atoms."""
+        if v == ["all"]:
+            return ALL_RNA_ATOMS
+        return v
+
+    @field_validator("dna_atoms", mode="before")  # type: ignore
+    def _validate_dna_atoms(cls, v):
+        """Validator to convert "all" to the full list of DNA atoms."""
+        if v == ["all"]:
+            return ALL_DNA_ATOMS
         return v
 
     @abstractmethod
@@ -227,6 +371,17 @@ class ChainTemplateIterator(BaseTemplateIterator):
 
     type: ClassVar[Literal["chain"]] = "chain"
 
+    # Override the default atoms to include all atoms
+    amino_acid_atoms: Annotated[list[str], Field(validate_default=True)] = ["all"]
+    rna_atoms: Annotated[list[str], Field(validate_default=True)] = ["all"]
+    dna_atoms: Annotated[list[str], Field(validate_default=True)] = ["all"]
+
+    def __init__(self, **data: Any):
+        super().__init__(**data)
+
+        # Add dummy column to keep track of the original indexes
+        self.structure_df["original_index"] = self.structure_df.index
+
     def chain_residue_iter(self) -> Iterator[tuple[list[str], list[int]]]:
         """Generator for iterating over the chain, residue pairs in the structure.
 
@@ -238,12 +393,31 @@ class ChainTemplateIterator(BaseTemplateIterator):
         tuple[str, int]
             Tuple of (chain, residue_id) pairs in the structure.
         """
+        keep_residues = []
+        if "amino_acid" in self.residue_types:
+            keep_residues.extend(AMINO_ACID_RESIDUES)
+        if "rna" in self.residue_types:
+            keep_residues.extend(RNA_RESIDUES)
+        if "dna" in self.residue_types:
+            keep_residues.extend(DNA_RESIDUES)
+
         unique_chain_ids = self.structure_df["chain"].unique()
         for chain_id in unique_chain_ids:
             residue_ids = self.structure_df[self.structure_df["chain"] == chain_id][
                 "residue_id"
             ].unique()
+
+            # Subselect residue ids that match the desired residue types
+            residue_ids = self.structure_df[
+                (self.structure_df["chain"] == chain_id)
+                & (self.structure_df["residue"].isin(keep_residues))
+            ]["residue_id"].unique()
+
             residue_ids = residue_ids.tolist()
+
+            # If no residues match the desired residue types, skip the chain
+            if not residue_ids:
+                continue
 
             yield [chain_id] * len(residue_ids), residue_ids
 
@@ -260,9 +434,32 @@ class ChainTemplateIterator(BaseTemplateIterator):
         torch.Tensor
             Tensor of indexes for the atoms to remove.
         """
-        unique_chain_ids = self.structure_df["chain"].unique()
-        for chain_id in unique_chain_ids:
-            atom_idxs = self.structure_df[self.structure_df["chain"] == chain_id].index
+        remove_atoms = []
+        if "amino_acid" in self.residue_types:
+            remove_atoms.extend(self.amino_acid_atoms)
+        if "rna" in self.residue_types:
+            remove_atoms.extend(self.rna_atoms)
+        if "dna" in self.residue_types:
+            remove_atoms.extend(self.dna_atoms)
+
+        cr_iter = self.chain_residue_iter()
+
+        # Iterate over the chain, residue pairs and yield the atom indexes
+        for chains_window, residues_window in cr_iter:
+            # Merge the DataFrame to keep only positions where the chain and residue
+            # pairs match the current window
+            # NOTE: When the dataframe is merged, the row indexes are overwritten...
+            # We use a dummy column to keep track of the original indexes by re-indexing
+            # the dataframe after the merge.
+            merge_df = pd.DataFrame(
+                {"chain": chains_window, "residue_id": residues_window}
+            )
+            df_window = self.structure_df.merge(merge_df)
+            df_window = df_window.set_index("original_index")
+
+            # Get the atom indexes for the current window (atoms that should be removed)
+            atom_idxs = df_window[df_window["atom"].isin(remove_atoms)].index
+
             if inverted:
                 atom_idxs = np.setdiff1d(np.arange(len(self.structure_df)), atom_idxs)
 
@@ -284,6 +481,9 @@ class ResidueTemplateIterator(BaseTemplateIterator):
     """
 
     type: ClassVar[Literal["residue"]] = "residue"
+    num_residues_removed: Annotated[int, Field(gt=0)]
+    residue_increment: Annotated[int, Field(gt=0)]
+
     randomize_chain_order: bool = False
 
     _chain_order: list[str]

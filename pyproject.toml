@@ -45,8 +45,8 @@ dependencies = [
     "types-PyYAML",
     "roma",
     "tqdm",
-    "ttsim3d @ git+https://github.com/mgiammar/ttsim3d.git@mdg_updates_for_mosaics",
-    "Leopard-EM"
+    "ttsim3d>=v0.3.0",
+    "Leopard-EM>=v0.0.5alpha",
 ]
 
 [tool.hatch.metadata]
