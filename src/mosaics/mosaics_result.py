@@ -54,7 +54,7 @@ class MosaicsResult(BaseModel):
         - alt_cc_1: The cross-correlation value for the second alternate model
         ...
 
-        The 'extra_columns parameter can be used to add additional columns to the
+        The 'extra_columns' parameter can be used to add additional columns to the
         DataFrame.
 
         Parameters
