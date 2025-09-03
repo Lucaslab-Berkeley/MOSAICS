@@ -1,17 +1,24 @@
 """Manager class for running MOSAICS."""
 
+from typing import Literal, Union
+
 import mmdf
 import numpy as np
 import roma
 import torch
 import tqdm
 import yaml  # type: ignore
-from leopard_em.backend.core_refine_template import cross_correlate_particle_stack
-from leopard_em.pydantic_models import ParticleStack, PreprocessingFilters
+from leopard_em.pydantic_models.config import PreprocessingFilters
+from leopard_em.pydantic_models.data_structures import ParticleStack
+from leopard_em.pydantic_models.utils import (
+    _setup_ctf_kwargs_from_particle_stack,
+    calculate_ctf_filter_stack_full_args,
+    setup_images_filters_particle_stack,
+)
 from pydantic import BaseModel
-from torch_fourier_filter.ctf import calculate_ctf_2d
 from ttsim3d.models import Simulator
 
+from .cross_correlation_core import cross_correlate_particle_stack
 from .mosaics_result import MosaicsResult
 from .template_iterator import BaseTemplateIterator, instantiate_template_iterator
 
@@ -42,7 +49,7 @@ class MosaicsManager(BaseModel):
     particle_stack: ParticleStack  # comes from Leopard-EM
     simulator: Simulator  # comes from ttsim3d
     template_iterator: BaseTemplateIterator
-    preprocessing_filters: PreprocessingFilters
+    preprocessing_filters: PreprocessingFilters  # comes from Leopard-EM
     sim_removed_atoms_only: bool = True
 
     @classmethod
@@ -72,85 +79,6 @@ class MosaicsManager(BaseModel):
 
         return cls(**data)
 
-    def setup_image_stack(self) -> torch.Tensor:
-        """Constructs the filtered image (particle) stack for the particle images."""
-        # Extract the images and do pre-processing steps
-        particle_images = self.particle_stack.construct_image_stack()
-        particle_images_dft = torch.fft.rfftn(particle_images, dim=(-2, -1))
-        particle_images_dft[..., 0, 0] = 0.0 + 0.0j  # Zero out DC component
-
-        # Calculate and apply the filters for the particle image stack
-        filter_stack = self.particle_stack.construct_filter_stack(
-            self.preprocessing_filters, output_shape=particle_images_dft.shape[-2:]
-        )
-        particle_images_dft *= filter_stack
-
-        # Normalize each particle image to mean zero variance 1
-        squared_image_dft = torch.abs(particle_images_dft) ** 2
-        squared_sum = torch.sum(squared_image_dft, dim=(-2, -1), keepdim=True)
-        particle_images_dft /= torch.sqrt(squared_sum)
-
-        # Normalize by the effective number of pixels in the particle images
-        # (sum of the bandpass filter). See comments in 'match_template_manager.py'.
-        bp_config = self.preprocessing_filters.bandpass_filter
-        bp_filter_image = bp_config.calculate_bandpass_filter(
-            particle_images_dft.shape[-2:]
-        )
-        dimensionality = bp_filter_image.sum()
-        particle_images_dft *= dimensionality**0.5
-
-        return particle_images_dft
-
-    def setup_projection_filter_stack(self) -> torch.Tensor:
-        """Constructs the filter stack (whitening and CTF) for the projection images."""
-        template_shape = self.particle_stack.original_template_size
-
-        # Calculate the filters applied to each template (except for CTF)
-        projective_filters = self.particle_stack.construct_filter_stack(
-            self.preprocessing_filters,
-            output_shape=(template_shape[-2], template_shape[-1] // 2 + 1),
-        )
-
-        # The best defocus values for each particle (+ astigmatism)
-        defocus_u = self.particle_stack.absolute_defocus_u
-        defocus_v = self.particle_stack.absolute_defocus_v
-        defocus_angle = torch.tensor(self.particle_stack["astigmatism_angle"])
-
-        # Keyword arguments for the CTF filter calculation call
-        # NOTE: We currently enforce the parameters (other than the defocus values) are
-        # all the same. This could be updated in the future...
-        part_stk = self.particle_stack
-        assert part_stk["pixel_size"].nunique() == 1
-        assert part_stk["voltage"].nunique() == 1
-        assert part_stk["spherical_aberration"].nunique() == 1
-        assert part_stk["amplitude_contrast_ratio"].nunique() == 1
-        assert part_stk["phase_shift"].nunique() == 1
-        assert part_stk["ctf_B_factor"].nunique() == 1
-
-        ctf_kwargs = {
-            "voltage": part_stk["voltage"][0].item(),
-            "spherical_aberration": part_stk["spherical_aberration"][0].item(),
-            "amplitude_contrast": part_stk["amplitude_contrast_ratio"][0].item(),
-            "b_factor": part_stk["ctf_B_factor"][0].item(),
-            "phase_shift": part_stk["phase_shift"][0].item(),
-            "pixel_size": part_stk["pixel_size"][0].item(),
-            "image_shape": template_shape,
-            "rfft": True,
-            "fftshift": False,
-        }
-
-        # Calculate all the CTF filters for the particle images
-        defocus = (defocus_u + defocus_v) / 2
-        astigmatism = (defocus_u - defocus_v) / 2
-        ctf_filters = calculate_ctf_2d(
-            defocus=defocus * 1e-4,  # Angstrom to um
-            astigmatism=astigmatism * 1e-4,  # Angstrom to um
-            astigmatism_angle=defocus_angle,
-            **ctf_kwargs,
-        )
-
-        return projective_filters * ctf_filters
-
     def _mosaics_inner_loop(
         self,
         particle_images_dft: torch.Tensor,
@@ -158,7 +86,8 @@ class MosaicsManager(BaseModel):
         projective_filters: torch.Tensor,
         default_volume: torch.Tensor,
         atom_indices: torch.Tensor,
-        gpu_id: int,
+        gpu_id: Union[Literal["cpu"], int],
+        batch_size: int = 2048,
     ) -> torch.Tensor:
         """Inner loop function for running the MOSAICS program.
 
@@ -175,10 +104,13 @@ class MosaicsManager(BaseModel):
         atom_indices : torch.Tensor
             Which atoms should be removed from the template for the alternate model.
         gpu_id : int
-            The GPU ID to use for the calculations. If -1, then the CPU will be used.
+            The GPU ID to use for the calculations. Should either be "cpu" or a
+            non-negative integer.
+        batch_size : int, optional
+            The batch size to use for the cross-correlation calculations. Default is
+            2048.
         """
-        alternate_volume = self.simulator.run(gpu_ids=gpu_id, atom_indices=atom_indices)
-        alternate_volume = torch.fft.fftshift(alternate_volume)
+        alternate_volume = self.simulator.run(device=gpu_id, atom_indices=atom_indices)
 
         # Subtract the alternate_volume from the default_volume if
         # self.sim_only_removed_atoms is set.
@@ -187,6 +119,7 @@ class MosaicsManager(BaseModel):
         if self.sim_removed_atoms_only:
             alternate_volume = default_volume - alternate_volume
 
+        alternate_volume = torch.fft.fftshift(alternate_volume)
         alternate_volume_dft = torch.fft.rfftn(alternate_volume, dim=(-3, -2, -1))
         alternate_volume_dft = torch.fft.fftshift(alternate_volume_dft, dim=(-3, -2))
 
@@ -198,64 +131,97 @@ class MosaicsManager(BaseModel):
             rotation_matrices=rot_mat,
             projective_filters=projective_filters,
             mode="valid",
-            batch_size=2048,
+            batch_size=batch_size,
         )
         alt_cc = torch.max(alt_cc.view(particle_images_dft.shape[0], -1), dim=-1).values
 
         return alt_cc
 
-    def run_mosaics(self, gpu_id: int) -> MosaicsResult:
+    def run_mosaics(
+        self, gpu_id: Union[Literal["cpu"], int], batch_size: int = 2048
+    ) -> MosaicsResult:
         """Run the MOSAICS program.
 
-        TODO: Complete docstring
+        Parameters
+        ----------
+        gpu_id : Union[Literal["cpu"], int]
+            The GPU ID to use for the computation. Can either be the string "cpu" to
+            use the CPU, or an integer specifying the GPU ID. All other values are
+            invalid.
+        batch_size : int, optional
+            The batch size -- number of particle images to process at once -- to use
+            for the cross-correlation calculations. The default is 2048.
         """
-        if gpu_id == -1:
+        if gpu_id == "cpu":
             device = torch.device("cpu")
-        else:
+        elif isinstance(gpu_id, int) and gpu_id >= 0:
             device = torch.device(f"cuda:{gpu_id}")
+        else:
+            raise ValueError(
+                f"Invalid gpu_id: {gpu_id}. Must be 'cpu' or a non-negative integer."
+            )
 
-        particle_images_dft = self.setup_image_stack()
-        projective_filters = self.setup_projection_filter_stack()
+        ################################################################
+        ### 0. Do necessary data extraction and pre-processing steps ###
+        ################################################################
 
-        # Orientations of all the particles
-        euler_angles = torch.stack(
-            (
-                torch.tensor(self.particle_stack["refined_phi"]),
-                torch.tensor(self.particle_stack["refined_theta"]),
-                torch.tensor(self.particle_stack["refined_psi"]),
-            ),
-            dim=-1,
+        # Simulate the default (full-length) template volume
+        default_template = self.simulator.run(device=gpu_id)
+
+        # Use the built-in processing functionality from Leopard-EM to compute
+        # the filtered particle images (in Fourier space) and the projective filters.
+        particle_images_dft, default_template_dft, projective_filters = (
+            setup_images_filters_particle_stack(
+                self.particle_stack, self.preprocessing_filters, default_template
+            )
         )
+
+        # Calculate the per-particle CTF array and combine it with projective filters
+        defocus_u, defocus_v = self.particle_stack.get_absolute_defocus()
+        defocus_angle = torch.tensor(self.particle_stack["astigmatism_angle"])
+        ctf_kwargs = _setup_ctf_kwargs_from_particle_stack(
+            self.particle_stack,
+            (default_template.shape[-2], default_template.shape[-1]),
+        )
+        ctf_filters = calculate_ctf_filter_stack_full_args(
+            defocus_u=defocus_u,  # in Angstrom
+            defocus_v=defocus_v,  # in Angstrom
+            astigmatism_angle=defocus_angle,  # in degrees
+            defocus_offsets=torch.Tensor([0.0]),
+            pixel_size_offsets=torch.Tensor([0.0]),
+            **ctf_kwargs,
+        )
+        ctf_filters.squeeze_(0)  # remove defocus offset dim
+        projective_filters = projective_filters * ctf_filters
+
+        # Grab the per-particle orientations preferring refined angles (if they exist)
+        euler_angles = self.particle_stack.get_euler_angles(prefer_refined_angles=True)
         rot_mat = roma.euler_to_rotmat("ZYZ", euler_angles, degrees=True)
         rot_mat = rot_mat.float()
 
         # Pass tensors to device
-        particle_images_dft = particle_images_dft.to(device)
         rot_mat = rot_mat.to(device)
         projective_filters = projective_filters.to(device)
+        particle_images_dft = particle_images_dft.to(device)
+        default_template_dft = default_template_dft.to(device)
 
         #####################################################
-        ### Default (full-length) model cross-correlation ###
+        ### 1. Calculate default (full length) cross corr ###
         #####################################################
-
-        default_volume = self.simulator.run(gpu_ids=gpu_id)
-        default_volume = torch.fft.fftshift(default_volume)
-        default_volume_dft = torch.fft.rfftn(default_volume, dim=(-3, -2, -1))
-        default_volume_dft = torch.fft.fftshift(default_volume_dft, dim=(-3, -2))
 
         default_cc = cross_correlate_particle_stack(
             particle_stack_dft=particle_images_dft,
-            template_dft=default_volume_dft,
+            template_dft=default_template_dft,
             rotation_matrices=rot_mat,
             projective_filters=projective_filters,
             mode="valid",
-            batch_size=2048,
+            batch_size=batch_size,
         )
         default_cc = torch.max(default_cc.view(default_cc.shape[0], -1), dim=-1).values
 
-        ###################################################
-        ### Iteration over alternate (truncated) models ###
-        ###################################################
+        ######################################################
+        ### 2. Iteration over alternate (truncated) models ###
+        ######################################################
 
         # The chains and residues removed for each alternate mode (for metadata)
         # Also used to infer the number of iterations for the tqdm object.
@@ -281,7 +247,7 @@ class MosaicsManager(BaseModel):
                 particle_images_dft=particle_images_dft,
                 rot_mat=rot_mat,
                 projective_filters=projective_filters,
-                default_volume=default_volume,
+                default_volume=default_template,
                 atom_indices=atom_indices,
                 gpu_id=gpu_id,
             )
