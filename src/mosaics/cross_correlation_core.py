@@ -6,21 +6,44 @@ import torch
 from torch_fourier_slice import extract_central_slices_rfft_3d
 
 
+def _cross_correlate_different_size(
+    particle_stack_images: torch.Tensor,  # (N, H, W)
+    fourier_slice: torch.Tensor,  # (N, h, w)
+) -> torch.Tensor:  # (N, H-h+1, W-w+1)
+    """Cross-correlate a stack of particle images against a template when the template is smaller than the images."""
+    image_h, image_w = particle_stack_images.shape[-2:]
+    template_h, template_w = fourier_slice.shape[-2], fourier_slice.shape[-1] * 2 - 2
+
+    valid_slice = slice(0, image_h - template_h + 1), slice(0, image_w - template_w + 1)
+
+    projections = torch.fft.irfftn(fourier_slice, dim=(-2, -1))
+    projections = torch.fft.ifftshift(projections, dim=(-2, -1))
+
+    cross_correlation_fft = particle_stack_images_fft * fourier_slice.conj()
+    cross_correlation = torch.fft.irfftn(cross_correlation_fft, dim=(-2, -1))
+
+    print(
+        f"cross_correlation shape: {cross_correlation.shape}, valid_slice: {valid_slice}"
+    )
+
+    return cross_correlation[:, valid_slice[0], valid_slice[1]]
+
+
 # pylint: disable=too-many-locals
 def cross_correlate_particle_stack(
     particle_stack_images: torch.Tensor,  # (N, H, W)
-    template_dft: torch.Tensor,  # (D, H, W)
+    template_dft: torch.Tensor,  # (d, h, w)
     rotation_matrices: torch.Tensor,  # (N, 3, 3)
-    projective_filters: torch.Tensor,  # (N, H, W)
+    projective_filters: torch.Tensor,  # (N, h, w)
     batch_size: int = 1024,
 ) -> torch.Tensor:  # (N, )
     """Cross-correlate a stack of particle images against a template.
 
-    MOSAICS assumes that there is no dependence on the particle orientation, defocus, or
-    (x, y) position for the cross-correlation operation; we are fixing these parameters
-    and searching over a set of alternate templates. This means we don't need to compute
-    the FFT-based cross-correlation and can instead use the Fourier slice directly to
-    compute the cross-correlation (fewer FFTs)
+    # MOSAICS assumes that there is no dependence on the particle orientation, defocus, or
+    # (x, y) position for the cross-correlation operation; we are fixing these parameters
+    # and searching over a set of alternate templates. This means we don't need to compute
+    # the FFT-based cross-correlation and can instead use the Fourier slice directly to
+    # compute the cross-correlation (fewer FFTs)
 
     Parameters
     ----------
@@ -50,14 +73,19 @@ def cross_correlate_particle_stack(
     _, template_h, template_w = template_dft.shape
     template_w = 2 * (template_w - 1)
 
-    assert (
-        image_h == template_h and image_w == template_w
-    ), "Particle images and template must have the same height and width."
+    # Can use faster approach if height and width are the same
+    _is_same_size = (image_h == template_h) and (image_w == template_w)
 
     if batch_size == -1:
         batch_size = num_particles
 
-    out_correlation = torch.zeros(num_particles, device=device)
+    if _is_same_size:
+        out_correlation = torch.zeros(num_particles, device=device)
+    else:
+        out_correlation = torch.zeros(
+            (num_particles, image_h - template_h + 1, image_w - template_w + 1),
+            device=device,
+        )
 
     # Loop over the particle stack in batches
     for i in range(0, num_particles, batch_size):
@@ -76,11 +104,13 @@ def cross_correlate_particle_stack(
         fourier_slice *= -1  # flip contrast
         fourier_slice *= batch_projective_filters
 
-        # Inverse Fourier transform
-        projections = torch.fft.irfftn(fourier_slice, dim=(-2, -1))
-        projections = torch.fft.ifftshift(projections, dim=(-2, -1))
+        if _is_same_size:
+            projections = torch.fft.irfftn(fourier_slice, dim=(-2, -1))
+            projections = torch.fft.ifftshift(projections, dim=(-2, -1))
+            tmp = torch.sum(batch_particles_images * projections, dim=(-2, -1))
+        else:
+            tmp = _cross_correlate_different_size(batch_particles_images, fourier_slice)
 
-        tmp = batch_particles_images * projections
-        out_correlation[batch_slice] = torch.sum(tmp, dim=(-2, -1))
+        out_correlation[batch_slice] = tmp
 
     return out_correlation
