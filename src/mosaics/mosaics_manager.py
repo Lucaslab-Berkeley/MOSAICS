@@ -289,6 +289,9 @@ class MosaicsManager(BaseModel):
             projective_filters=projective_filters,
             batch_size=batch_size,
         )
+        default_overlap = torch.einsum(
+            "nij,nij->n", full_length_projections, full_length_projections
+        )
 
         default_cc, _ = cross_correlate_particle_stack(
             particle_stack_images=particle_images,
@@ -387,6 +390,7 @@ class MosaicsManager(BaseModel):
 
         return MosaicsResult(
             default_cross_correlation=default_cc.cpu().numpy(),
+            default_overlap=default_overlap.cpu().numpy(),
             template_iterator_config=self.template_iterator.model_dump(),
             sim_removed_atoms_only=self.sim_removed_atoms_only,
             alternate_template_results=alternate_template_results,
