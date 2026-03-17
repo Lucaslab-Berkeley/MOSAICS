@@ -15,7 +15,6 @@ def _cross_correlate_different_size(
     template_h, template_w = fourier_slice.shape[-2], fourier_slice.shape[-1] * 2 - 2
     valid_slice = slice(0, image_h - template_h + 1), slice(0, image_w - template_w + 1)
 
-
     projections = torch.fft.irfftn(fourier_slice, dim=(-2, -1))
     projections = torch.fft.ifftshift(projections, dim=(-2, -1))
 
@@ -34,15 +33,10 @@ def cross_correlate_particle_stack(
     template_dft: torch.Tensor,  # (d, h, w)
     rotation_matrices: torch.Tensor,  # (N, 3, 3)
     projective_filters: torch.Tensor,  # (N, h, w)
+    perfect_projection_images: torch.Tensor | None = None,  # (N, h, w)
     batch_size: int = 1024,
-) -> torch.Tensor:  # (N, )
+) -> tuple[torch.Tensor, torch.Tensor | None]:
     """Cross-correlate a stack of particle images against a template.
-
-    # MOSAICS assumes that there is no dependence on the particle orientation, defocus, or
-    # (x, y) position for the cross-correlation operation; we are fixing these parameters
-    # and searching over a set of alternate templates. This means we don't need to compute
-    # the FFT-based cross-correlation and can instead use the Fourier slice directly to
-    # compute the cross-correlation (fewer FFTs)
 
     Parameters
     ----------
@@ -56,6 +50,9 @@ def cross_correlate_particle_stack(
         list of rotation matrices. Shape of (N, 3, 3).
     projective_filters : torch.Tensor
         Projective filters to apply to each Fourier slice particle. Shape of (N, h, w).
+    perfect_projection_images : torch.Tensor | None, optional
+        Expected perfect projection images for each particle. If provided, used to
+        calculate the overlap between teh new template and the perfect projection.
     batch_size : int, optional
         The number of particle images to cross-correlate at once. Default is 1024.
         Larger sizes will consume more memory. If -1, then the entire stack will be
@@ -80,10 +77,23 @@ def cross_correlate_particle_stack(
 
     if _is_same_size:
         out_correlation = torch.zeros(num_particles, device=device)
+        out_correlation_perfect = (
+            torch.zeros(num_particles, device=device)
+            if perfect_projection_images is not None
+            else None
+        )
     else:
         out_correlation = torch.zeros(
             (num_particles, image_h - template_h + 1, image_w - template_w + 1),
             device=device,
+        )
+        out_correlation_perfect = (
+            torch.zeros(
+                (num_particles, image_h - template_h + 1, image_w - template_w + 1),
+                device=device,
+            )
+            if perfect_projection_images is not None
+            else None
         )
 
     # Loop over the particle stack in batches
@@ -107,9 +117,19 @@ def cross_correlate_particle_stack(
             projections = torch.fft.irfftn(fourier_slice, dim=(-2, -1))
             projections = torch.fft.ifftshift(projections, dim=(-2, -1))
             tmp = torch.sum(batch_particles_images * projections, dim=(-2, -1))
+            if perfect_projection_images is not None:
+                perfect_projections = perfect_projection_images[batch_slice]
+                tmp_perfect = torch.sum(perfect_projections * projections, dim=(-2, -1))
         else:
             tmp = _cross_correlate_different_size(batch_particles_images, fourier_slice)
+            if perfect_projection_images is not None:
+                perfect_projections = perfect_projection_images[batch_slice]
+                tmp_perfect = _cross_correlate_different_size(
+                    perfect_projections, fourier_slice
+                )
 
         out_correlation[batch_slice] = tmp
+        if perfect_projection_images is not None:
+            out_correlation_perfect[batch_slice] = tmp_perfect
 
-    return out_correlation
+    return out_correlation, out_correlation_perfect

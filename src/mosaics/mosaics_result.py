@@ -48,6 +48,10 @@ class AlternateTemplateResult(BaseModel):
         calculation. Default is False which means the entire model (minus the removed
         atoms from the corresponding residues) were used in the calculation. If True,
         only the removed atoms were used in the calculation.
+    alternate_overlap : np.ndarray
+        The overlap between the alternate model projections and the default model
+        projections. Used for normalization of cross-correlation values for orientation
+        and feature sizes.
     scattering_potential_full_length : float
         The total scattering potential of the full-length model.
     scattering_potential_alternate : float
@@ -70,6 +74,7 @@ class AlternateTemplateResult(BaseModel):
     residue_ids: list[Optional[int]]  # index aligned with chain_ids
     removed_atom_indices: NDArray
     sim_removed_atoms_only: bool
+    alternate_overlap: NDArray
     scattering_potential_full_length: float
     scattering_potential_alternate: float
 
@@ -168,14 +173,14 @@ class MosaicsResult(BaseModel):
 
         return np.array(res)
 
-    def as_ndarrays(self) -> tuple[np.ndarray, np.ndarray]:
+    def as_ndarrays(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Returns the default and alternate cross-correlation values as numpy arrays.
 
         Returns
         -------
-            tuple[np.ndarray, np.ndarray]: The tuple containing the default and
-            alternate cross-correlation values as numpy arrays. The firs array is of
-            shape (num_particles,) and the second array is of shape
+            tuple[np.ndarray, np.ndarray, np.ndarray]: The tuple containing the default
+            and alternate cross-correlation values as numpy arrays. The first array is
+            of shape (num_particles,) and the second and third arrays are of shape
             (num_particles, num_alternate_models).
         """
         default_cc = np.array(self.default_cross_correlation)
@@ -185,7 +190,13 @@ class MosaicsResult(BaseModel):
                 for alt_result in self.alternate_template_results
             ]
         ).T
-        return default_cc, alt_cc
+        alt_overlap = np.array(
+            [
+                alt_result.alternate_overlap
+                for alt_result in self.alternate_template_results
+            ]
+        ).T
+        return default_cc, alt_cc, alt_overlap
 
     def mosaics_scores(self) -> np.ndarray:
         """Calculates the MOSAICS scores for each particle and alternate model.

@@ -18,6 +18,7 @@ from leopard_em.pydantic_models.utils import (
 )
 from pydantic import BaseModel
 from ttsim3d.models import Simulator
+from torch_fourier_slice import project_3d_to_2d
 
 from .cross_correlation_core import cross_correlate_particle_stack
 from .mosaics_dataset import MosaicsDataset
@@ -30,6 +31,78 @@ SAME_BOX_SIZE_WARNING = (
     "to be determined. Cannot find shifts with the same sizes. Please set "
     "'extracted_box_size' to be ~15-20 pct larger than 'original_template_size'."
 )
+
+
+def _center_images_by_correlations(
+    cross_correlation: torch.Tensor,  # (N, H - h, W - w)
+    particle_images: torch.Tensor,  # (N, H, W)
+    original_template_size: tuple[int, int],  # (h, w)
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Center and crop particle images by maximum cross-correlation peak."""
+    H, W = particle_images.shape[-2], particle_images.shape[-1]
+    h, w = original_template_size
+
+    cc = cross_correlation.view(cross_correlation.shape[0], -1)
+    max_cc_values, max_cc_indices = torch.max(cc, dim=1)
+    max_xy_indices = torch.unravel_index(max_cc_indices, cross_correlation.shape[1:])
+
+    # Crop to same shape as projection around the peak
+    centered_images = torch.zeros(
+        (particle_images.shape[0], h, w), device=particle_images.device
+    )
+
+    ccg_center_y = (H - h) // 2
+    ccg_center_x = (W - w) // 2
+    for i in range(particle_images.shape[0]):
+        x_pos, y_pos = max_xy_indices[0][i], max_xy_indices[1][i]
+
+        shift_y = y_pos - ccg_center_y
+        shift_x = x_pos - ccg_center_x
+
+        y_start = ccg_center_y + shift_y
+        y_end = y_start + h
+        x_start = ccg_center_x + shift_x
+        x_end = x_start + w
+
+        centered_images[i] = particle_images[i, x_start:x_end, y_start:y_end]
+
+    # Renormalize the centered images based on new shape
+    centered_images *= ((h * w) / (H * W)) ** 0.5
+
+    return max_cc_values, centered_images
+
+
+def _get_full_length_projections(
+    default_volume: torch.Tensor,
+    rotation_matrices: torch.Tensor,
+    projective_filters: torch.Tensor,
+    batch_size: int = 2048,
+) -> torch.Tensor:
+    """Calculate the full-length projections for the default template."""
+    full_length_projections = torch.zeros(
+        (
+            rotation_matrices.shape[0],
+            default_volume.shape[-2],
+            default_volume.shape[-1],
+        ),
+        device=default_volume.device,
+    )
+
+    for i in range(0, rotation_matrices.shape[0], batch_size):
+        batch_rotation_matrices = rotation_matrices[i : i + batch_size]
+        batch_projective_filters = projective_filters[i : i + batch_size]
+
+        batch_projections = project_3d_to_2d(
+            volume=default_volume, rotation_matrices=batch_rotation_matrices
+        )
+        batch_projections_dft = torch.fft.rfftn(batch_projections, dim=(-2, -1))
+        batch_projections_dft *= batch_projective_filters
+        batch_projections_dft *= -1
+        batch_projections = torch.fft.irfftn(batch_projections_dft, dim=(-2, -1))
+
+        full_length_projections[i : i + batch_size] = batch_projections
+
+    return full_length_projections
 
 
 class MosaicsManager(BaseModel):
@@ -61,8 +134,6 @@ class MosaicsManager(BaseModel):
 
     simulator: Simulator
     template_iterator: BaseTemplateIterator
-    # particle_stack: ParticleStack
-    # preprocessing_filters: PreprocessingFilters
     dataset: MosaicsDataset
     sim_removed_atoms_only: bool = True
     particle_positions_are_centered: bool = False
@@ -97,19 +168,22 @@ class MosaicsManager(BaseModel):
     def _mosaics_inner_loop(
         self,
         particle_images: torch.Tensor,
+        full_length_projections: torch.Tensor,
         rotation_matrices: torch.Tensor,
         projective_filters: torch.Tensor,
         default_volume: torch.Tensor,
         atom_indices: torch.Tensor,
         device: torch.device,
         batch_size: int = 2048,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Inner loop function for running the MOSAICS program.
 
         Parameters
         ----------
         particle_images : torch.Tensor
             Pre-processed and normalized particle images *in real space*.
+        full_length_projections : torch.Tensor
+            The full-length projection images for comparison.
         rotation_matrices : torch.Tensor
             The rotation matrices for the orientations of each particle.
         projective_filters : torch.Tensor
@@ -126,8 +200,11 @@ class MosaicsManager(BaseModel):
 
         Returns
         -------
-        torch.Tensor
-            The cross-correlation values for the alternate template. Shape of (N,).
+        tuple[torch.Tensor, torch.Tensor]
+            - First element is cross-correlation values of the alternate model with
+            particle images.
+            - Second element is the correlation between the default model
+            projections and alternate model projections (expected decrease).
         """
         alternate_volume = self.simulator.run(
             device=str(device), atom_indices=atom_indices
@@ -146,52 +223,16 @@ class MosaicsManager(BaseModel):
 
         # Recalculate the cross-correlation with the alternate model
         # and take the maximum value over space
-        alternate_cc = cross_correlate_particle_stack(
+        alternate_cc, overlap_cc = cross_correlate_particle_stack(
             particle_stack_images=particle_images,
+            perfect_projection_images=full_length_projections,
             template_dft=alternate_volume_dft,
             rotation_matrices=rotation_matrices,
             projective_filters=projective_filters,
             batch_size=batch_size,
         )
 
-        return alternate_cc
-
-    def _center_images_by_correlations(
-        self,
-        cross_correlation: torch.Tensor,  # (N, H - h, W - w)
-        particle_images: torch.Tensor,  # (N, H, W)
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Center and crop particle images by maximum cross-correlation peak."""
-        H, W = particle_images.shape[-2], particle_images.shape[-1]
-        h, w = self.dataset.particle_stack.original_template_size
-
-        cc = cross_correlation.view(cross_correlation.shape[0], -1)
-        max_cc_values, max_cc_indices = torch.max(cc, dim=1)
-        max_xy_indices = torch.unravel_index(
-            max_cc_indices, cross_correlation.shape[1:]
-        )
-
-        # Crop to same shape as projection around the peak
-        centered_images = torch.zeros(
-            (particle_images.shape[0], h, w), device=particle_images.device
-        )
-
-        ccg_center_y = (H - h) // 2
-        ccg_center_x = (W - w) // 2
-        for i in range(particle_images.shape[0]):
-            x_pos, y_pos = max_xy_indices[0][i], max_xy_indices[1][i]
-            
-            shift_y = y_pos - ccg_center_y
-            shift_x = x_pos - ccg_center_x
-
-            y_start = ccg_center_y + shift_y
-            y_end = y_start + h
-            x_start = ccg_center_x + shift_x
-            x_end = x_start + w
-
-            centered_images[i] = particle_images[i, x_start:x_end, y_start:y_end]
-
-        return max_cc_values, centered_images
+        return alternate_cc, overlap_cc
 
     def run_mosaics(
         self,
@@ -238,12 +279,20 @@ class MosaicsManager(BaseModel):
         default_template = self.dataset.template_volume
         default_template_dft = self.dataset.template_volume_dft
 
-        #####################################################
-        ### 1. Calculate default (full length) cross corr ###
-        #####################################################
+        #####################################################################
+        ### 1. Calculate default (full length) cross corr and projections ###
+        #####################################################################
 
-        default_cc = cross_correlate_particle_stack(
+        full_length_projections = _get_full_length_projections(
+            default_volume=default_template,
+            rotation_matrices=rotation_matrices,
+            projective_filters=projective_filters,
+            batch_size=batch_size,
+        )
+
+        default_cc, _ = cross_correlate_particle_stack(
             particle_stack_images=particle_images,
+            perfect_projection_images=None,  # Don't need auto-correlation
             template_dft=default_template_dft,
             rotation_matrices=rotation_matrices,
             projective_filters=projective_filters,
@@ -271,8 +320,11 @@ class MosaicsManager(BaseModel):
                     stacklevel=2,
                 )
             else:
-                default_cc, particle_images = self._center_images_by_correlations(
-                    cross_correlation=default_cc, particle_images=particle_images
+                orig_template_size = self.dataset.particle_stack.original_template_size
+                default_cc, particle_images = _center_images_by_correlations(
+                    cross_correlation=default_cc,
+                    particle_images=particle_images,
+                    original_template_size=orig_template_size,
                 )
 
         ######################################################
@@ -302,11 +354,13 @@ class MosaicsManager(BaseModel):
                     stacklevel=2,
                 )
                 alternate_cc = default_cc
+                alternate_overlap = torch.ones_like(default_cc)
                 alternate_scattering_potential = default_scattering_potential
 
             else:
-                alternate_cc = self._mosaics_inner_loop(
+                alternate_cc, alternate_overlap = self._mosaics_inner_loop(
                     particle_images=particle_images,
+                    full_length_projections=full_length_projections,
                     rotation_matrices=rotation_matrices,
                     projective_filters=projective_filters,
                     default_volume=default_template,
@@ -314,6 +368,7 @@ class MosaicsManager(BaseModel):
                     device=device,
                 )
             alternate_cc = alternate_cc.cpu().numpy()
+            alternate_overlap = alternate_overlap.cpu().numpy()
             alternate_scattering_potential = (
                 self.template_iterator.get_template_scattering_potential(atom_indices)
             )
@@ -324,6 +379,7 @@ class MosaicsManager(BaseModel):
                 residue_ids=residues,
                 removed_atom_indices=atom_indices.cpu().numpy(),
                 sim_removed_atoms_only=self.sim_removed_atoms_only,
+                alternate_overlap=alternate_overlap,
                 scattering_potential_full_length=default_scattering_potential,
                 scattering_potential_alternate=alternate_scattering_potential,
             )
