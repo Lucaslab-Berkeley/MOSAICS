@@ -13,18 +13,17 @@ def _cross_correlate_different_size(
     """Cross-correlate a stack of particle images against a template when the template is smaller than the images."""
     image_h, image_w = particle_stack_images.shape[-2:]
     template_h, template_w = fourier_slice.shape[-2], fourier_slice.shape[-1] * 2 - 2
-
     valid_slice = slice(0, image_h - template_h + 1), slice(0, image_w - template_w + 1)
+
 
     projections = torch.fft.irfftn(fourier_slice, dim=(-2, -1))
     projections = torch.fft.ifftshift(projections, dim=(-2, -1))
 
+    particle_stack_images_fft = torch.fft.rfftn(particle_stack_images, dim=(-2, -1))
+    fourier_slice = torch.fft.rfftn(projections, dim=(-2, -1), s=(image_h, image_w))
+
     cross_correlation_fft = particle_stack_images_fft * fourier_slice.conj()
     cross_correlation = torch.fft.irfftn(cross_correlation_fft, dim=(-2, -1))
-
-    print(
-        f"cross_correlation shape: {cross_correlation.shape}, valid_slice: {valid_slice}"
-    )
 
     return cross_correlation[:, valid_slice[0], valid_slice[1]]
 

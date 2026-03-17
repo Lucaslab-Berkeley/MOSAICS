@@ -6,6 +6,20 @@ ERR_MSG = (
 )
 
 
+import numpy as np
+import torch
+import roma
+from pydantic import BaseModel
+from leopard_em.pydantic_models.config import PreprocessingFilters
+from leopard_em.pydantic_models.data_structures import ParticleStack
+from leopard_em.pydantic_models.utils import (
+    _setup_ctf_kwargs_from_particle_stack,
+    calculate_ctf_filter_stack_full_args,
+    setup_images_filters_particle_stack,
+)
+from ttsim3d.models import Simulator
+
+
 class MosaicsDataset(BaseModel):
     """Dataset class for processing, loading, and caching inputs for MOSAICS.
 
@@ -115,7 +129,7 @@ class MosaicsDataset(BaseModel):
         defocus_angle = torch.tensor(self.particle_stack["astigmatism_angle"])
         ctf_kwargs = _setup_ctf_kwargs_from_particle_stack(
             self.particle_stack,
-            (default_template.shape[-2], default_template.shape[-1]),
+            (template_volume.shape[-2], template_volume.shape[-1]),
         )
         ctf_filters = calculate_ctf_filter_stack_full_args(
             defocus_u=defocus_u,  # in Angstrom
@@ -135,11 +149,11 @@ class MosaicsDataset(BaseModel):
         rotation_matrices = rotation_matrices.float()
 
         # Store the processed variables for later use
-        self._rotation_matrices = rotation_matrices
-        self._projective_filters = projective_filters
-        self._particle_images = particle_images
-        self._template_volume = template_volume
-        self._template_volume_dft = template_volume_dft
+        self._rotation_matrices = rotation_matrices.to(device)
+        self._projective_filters = projective_filters.to(device)
+        self._particle_images = particle_images.to(device)
+        self._template_volume = template_volume.to(device)
+        self._template_volume_dft = template_volume_dft.to(device)
 
     def save_to_cache(self, cache_path: str) -> None:
         """Saves the pre-processed dataset to a cache file for future reuse.

@@ -25,6 +25,13 @@ from .mosaics_result import AlternateTemplateResult, MosaicsResult
 from .template_iterator import BaseTemplateIterator, instantiate_template_iterator
 
 
+SAME_BOX_SIZE_WARNING = (
+    "The extracted box size is the as projection size, but requested particle shifts "
+    "to be determined. Cannot find shifts with the same sizes. Please set "
+    "'extracted_box_size' to be ~15-20 pct larger than 'original_template_size'."
+)
+
+
 class MosaicsManager(BaseModel):
     """Class for importing, running, and exporting MOSAICS program data.
 
@@ -43,6 +50,13 @@ class MosaicsManager(BaseModel):
         subtract the alternate volume from the default volume. When False, simulate the
         entire alternate template and subtract the alternate volume from the default.
         Simulating only the removed atoms is generally faster. Default is True.
+    particle_positions_are_centered : bool
+        If True, then assume that the extracted boxes of particle images coming from
+        'dataset.particle_images' will produce correlogram peak at central pixel.
+        If False (typical), then determine the (x, y) position of each correlogram peak
+        before proceeding. Default is False. NOTE: When this is set to False,
+        the extracted box size should be larger than the maximum expected particle
+        shift.
     """
 
     simulator: Simulator
@@ -51,6 +65,7 @@ class MosaicsManager(BaseModel):
     # preprocessing_filters: PreprocessingFilters
     dataset: MosaicsDataset
     sim_removed_atoms_only: bool = True
+    particle_positions_are_centered: bool = False
 
     @classmethod
     def from_yaml(cls, yaml_path: str) -> "MosaicsManager":
@@ -141,6 +156,43 @@ class MosaicsManager(BaseModel):
 
         return alternate_cc
 
+    def _center_images_by_correlations(
+        self,
+        cross_correlation: torch.Tensor,  # (N, H - h, W - w)
+        particle_images: torch.Tensor,  # (N, H, W)
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Center and crop particle images by maximum cross-correlation peak."""
+        H, W = particle_images.shape[-2], particle_images.shape[-1]
+        h, w = self.dataset.particle_stack.original_template_size
+
+        cc = cross_correlation.view(cross_correlation.shape[0], -1)
+        max_cc_values, max_cc_indices = torch.max(cc, dim=1)
+        max_xy_indices = torch.unravel_index(
+            max_cc_indices, cross_correlation.shape[1:]
+        )
+
+        # Crop to same shape as projection around the peak
+        centered_images = torch.zeros(
+            (particle_images.shape[0], h, w), device=particle_images.device
+        )
+
+        ccg_center_y = (H - h) // 2
+        ccg_center_x = (W - w) // 2
+        for i in range(particle_images.shape[0]):
+            x_pos, y_pos = max_xy_indices[0][i], max_xy_indices[1][i]
+            
+            shift_y = y_pos - ccg_center_y
+            shift_x = x_pos - ccg_center_x
+
+            y_start = ccg_center_y + shift_y
+            y_end = y_start + h
+            x_start = ccg_center_x + shift_x
+            x_end = x_start + w
+
+            centered_images[i] = particle_images[i, x_start:x_end, y_start:y_end]
+
+        return max_cc_values, centered_images
+
     def run_mosaics(
         self,
         gpu_id: Union[Literal["cpu"], int],
@@ -198,10 +250,33 @@ class MosaicsManager(BaseModel):
             batch_size=batch_size,
         )
 
-        default_scattering_potential = self.template_iterator.get_template_scattering_potential(None)
+        default_scattering_potential = (
+            self.template_iterator.get_template_scattering_potential(None)
+        )
 
         ######################################################
-        ### 2. Iteration over alternate (truncated) models ###
+        ### 2. Determine the position of correlogram peaks ###
+        ######################################################
+
+        if not self.particle_positions_are_centered:
+            _box_size_is_same = (
+                self.dataset.particle_stack.extracted_box_size
+                == self.dataset.particle_stack.original_template_size
+            )
+
+            if _box_size_is_same:
+                warnings.warn(
+                    warning_message=SAME_BOX_SIZE_WARNING,
+                    category=RuntimeWarning,
+                    stacklevel=2,
+                )
+            else:
+                default_cc, particle_images = self._center_images_by_correlations(
+                    cross_correlation=default_cc, particle_images=particle_images
+                )
+
+        ######################################################
+        ### 3. Iteration over alternate (truncated) models ###
         ######################################################
 
         num_iters = self.template_iterator.num_alternate_structures
@@ -239,8 +314,8 @@ class MosaicsManager(BaseModel):
                     device=device,
                 )
             alternate_cc = alternate_cc.cpu().numpy()
-            alternate_scattering_potential = self.template_iterator.get_template_scattering_potential(
-                atom_indices
+            alternate_scattering_potential = (
+                self.template_iterator.get_template_scattering_potential(atom_indices)
             )
 
             this_result = AlternateTemplateResult(
