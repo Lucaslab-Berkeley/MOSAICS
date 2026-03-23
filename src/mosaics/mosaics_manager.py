@@ -66,8 +66,10 @@ def _center_images_by_correlations(
 
         centered_images[i] = particle_images[i, x_start:x_end, y_start:y_end]
 
-    # Renormalize the centered images based on new shape
-    centered_images *= ((h * w) / (H * W)) ** 0.5
+    # Renormalize the centered images and correlation values based on new shape
+    factor = ((h * w) / (H * W)) ** 0.5
+    centered_images *= factor
+    max_cc_values *= factor
 
     return max_cc_values, centered_images
 
