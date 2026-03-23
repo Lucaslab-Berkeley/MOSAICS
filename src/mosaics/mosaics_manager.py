@@ -291,9 +291,6 @@ class MosaicsManager(BaseModel):
             projective_filters=projective_filters,
             batch_size=batch_size,
         )
-        default_overlap = torch.einsum(
-            "nij,nij->n", full_length_projections, full_length_projections
-        )
 
         default_cc, _ = cross_correlate_particle_stack(
             particle_stack_images=particle_images,
@@ -326,11 +323,20 @@ class MosaicsManager(BaseModel):
                 )
             else:
                 orig_template_size = self.dataset.particle_stack.original_template_size
-                default_cc, particle_images = _center_images_by_correlations(
+                _, particle_images = _center_images_by_correlations(
                     cross_correlation=default_cc,
                     particle_images=particle_images,
                     original_template_size=orig_template_size,
                 )
+
+        default_cc, default_overlap = cross_correlate_particle_stack(
+            particle_stack_images=particle_images,
+            perfect_projection_images=full_length_projections,
+            template_dft=default_template_dft,
+            rotation_matrices=rotation_matrices,
+            projective_filters=projective_filters,
+            batch_size=batch_size,
+        )
 
         ######################################################
         ### 3. Iteration over alternate (truncated) models ###
@@ -372,6 +378,7 @@ class MosaicsManager(BaseModel):
                     atom_indices=atom_indices,
                     device=device,
                 )
+
             alternate_cc = alternate_cc.cpu().numpy()
             alternate_overlap = alternate_overlap.cpu().numpy()
             alternate_scattering_potential = (
