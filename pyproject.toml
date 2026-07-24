@@ -49,7 +49,7 @@ dependencies = [
     "ttsim3d",
     "teamtomo-basemodel",
     "Leopard-EM>=v1.0",
-    "torch-fourier-slice>=v0.4.0"
+    "torch-fourier-slice>=v0.5.2"
 ]
 
 [tool.hatch.metadata]
