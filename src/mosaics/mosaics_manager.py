@@ -11,11 +11,11 @@ import tqdm
 import yaml  # type: ignore
 from leopard_em.pydantic_models.config import PreprocessingFilters
 from leopard_em.pydantic_models.data_structures import ParticleStack
-from leopard_em.pydantic_models.utils import (
-    _setup_ctf_kwargs_from_particle_stack,
-    calculate_ctf_filter_stack_full_args,
-    setup_images_filters_particle_stack,
+from leopard_em.utils.ctf_utils import (
+   _setup_ctf_kwargs_from_particle_stack,
+   calculate_ctf_filter_stack_full_args,
 )
+from leopard_em.utils.backend_setup import setup_images_filters_particle_stack
 from pydantic import BaseModel
 from ttsim3d.models import Simulator
 from torch_fourier_slice import project_3d_to_2d
