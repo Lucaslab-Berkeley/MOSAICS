@@ -221,10 +221,12 @@ ALL_GLYCAN_ATOMS = [
     "S4",
 ]
 
-GLYCAN_WARNING = """"
-Glycan structures can branch, and may not be amenable to residue-level analyis. 
-Always be sure to check your PDB structure to confirm which atoms were removed.
-"""
+GLYCAN_WARNING = ( 
+"Glycan structures can branch, and as such, may not be amenable to "
+"residue-level analyis based on coherent residue windows. "
+"Always be sure to check your PDB structure to confirm which atoms were removed, "
+"and consider using chain-based removal for any experiment with glycans."
+)
 
 # TODO: Make this a lookup table, move to a separate file, or use external package
 MASS_DICT = {"H": 1.01, "C": 12.01, "N": 14.01, "O": 16.00, "S": 32.06, "P": 30.97}
@@ -622,7 +624,7 @@ class ResidueTemplateIterator(BaseTemplateIterator):
         if "glycan" in self.residue_types:
             warnings.warn(
                 GLYCAN_WARNING,
-                stacklevel=2
+                stacklevel=1
             )
         # The unique method should retain default order. 
         unique_chains = list(self.structure_df["chain"].unique())
@@ -789,7 +791,7 @@ class RandomResidueTemplateIterator(BaseTemplateIterator):
             if "glycan" in self.residue_types:
                 warnings.warn(
                     GLYCAN_WARNING,
-                    stacklevel=2
+                    stacklevel=1
                 )
             start_indexes = np.random.randint(
                 0,
