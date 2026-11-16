@@ -6,6 +6,7 @@ from typing import Annotated, Any, ClassVar, Literal, Union
 
 import numpy as np
 import pandas as pd
+import warnings
 import torch
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from teamtomo_basemodel import ExcludedDataFrame
@@ -198,42 +199,32 @@ ALL_GLYCAN_ATOMS = [
     "C6",
     "C7",
     "C8",
-    "O3",
-    "N2",
+    "C9",
+    "C10",
+    "C11", 
+    "C12",
     "O1",
-    "S4"
+    "O2",
     "O3",
     "O4",
     "O5",
     "O6",
     "O7",
-    "H1",
-    "H2",
-    "H3",
-    "H4",
-    "H5",
-    "H61",
-    "H62",
-    "H81",
-    "H82",
-    "H83",
-    "HN2",
-    "HO3",
-    "HO6",
-    "O2",
-    "HO2",
-    "HO4",
-    "H63",
-    "C10",
-    "C11", 
-    "C9",
-    "N5",
-    "O10",
-    "O1A",
-    "O1B",
     "O8",
     "O9"
+    "O10",
+    "O11",
+    "O1A",
+    "O1B",
+    "N2",
+    "N5",
+    "S4",
 ]
+
+GLYCAN_WARNING = """"
+Glycan structures can branch, and may not be amenable to residue-level analyis. 
+Always be sure to check your PDB structure to confirm which atoms were removed.
+"""
 
 # TODO: Make this a lookup table, move to a separate file, or use external package
 MASS_DICT = {"H": 1.01, "C": 12.01, "N": 14.01, "O": 16.00, "S": 32.06, "P": 30.97}
@@ -628,6 +619,11 @@ class ResidueTemplateIterator(BaseTemplateIterator):
 
     def __init__(self, **data: Any):
         super().__init__(**data)
+        if "glycan" in self.residue_types:
+            warnings.warn(
+                GLYCAN_WARNING,
+                stacklevel=2
+            )
         # The unique method should retain default order. 
         unique_chains = list(self.structure_df["chain"].unique())
         # check if all chains are present in the dataframe
@@ -699,6 +695,7 @@ class ResidueTemplateIterator(BaseTemplateIterator):
             If 'True', return the indexes of atoms to remove rather than keep.
         """
         chain_res_pairs = self.chain_residue_pairs()
+        
         chains = np.array([chain for chain, _ in chain_res_pairs])
         residues = np.array([residue for _, residue in chain_res_pairs])
 
@@ -789,6 +786,11 @@ class RandomResidueTemplateIterator(BaseTemplateIterator):
 
         # Choose which residue indices to remove based on the coherent_removal flag
         if self.coherent_removal:
+            if "glycan" in self.residue_types:
+                warnings.warn(
+                    GLYCAN_WARNING,
+                    stacklevel=2
+                )
             start_indexes = np.random.randint(
                 0,
                 len(chain_res_pairs) - self.num_residues_removed + 1,

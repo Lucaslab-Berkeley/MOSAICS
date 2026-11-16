@@ -6,8 +6,6 @@ from typing import Literal, Union
 import mmdf
 import torch
 import tqdm
-import mrcfile
-import numpy as np
 import yaml  # type: ignore
 from pydantic import BaseModel
 from ttsim3d.models import Simulator
@@ -25,8 +23,6 @@ SAME_BOX_SIZE_WARNING = (
     "'extracted_box_size' to be ~15-20 pct larger than 'original_template_size'."
 )
 
-DEFAULT_VOLUME_DIR = '/home/brose/lab_projects/MOSAICS_paper_2026/MFSD6_finding/templates/mosaics_volumes'
-print("saving volumes for testing")
 
 def _center_images_by_correlations(
     cross_correlation: torch.Tensor,  # (N, H - h, W - w)
@@ -175,7 +171,6 @@ class MosaicsManager(BaseModel):
         atom_indices: torch.Tensor,
         device: torch.device,
         batch_size: int = 2048,
-        counter: int = 0, 
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Inner loop function for running the MOSAICS program.
 
@@ -217,9 +212,6 @@ class MosaicsManager(BaseModel):
         # removed get simulated rather than the atoms which should be kept.
         if self.sim_removed_atoms_only:
             alternate_volume = default_volume - alternate_volume
-        with mrcfile.new(f"{DEFAULT_VOLUME_DIR}/alt_volume_{counter}.mrc", overwrite=True) as mrc:
-            mrc.set_data(alternate_volume.cpu().numpy().astype(np.float32))
-            mrc.voxel_size = [self.simulator.pixel_spacing] * 3
 
         alternate_volume = torch.fft.fftshift(alternate_volume)
         alternate_volume_dft = torch.fft.rfftn(alternate_volume, dim=(-3, -2, -1))
@@ -283,9 +275,6 @@ class MosaicsManager(BaseModel):
         default_template = self.dataset.template_volume
         default_template_dft = self.dataset.template_volume_dft
 
-        with mrcfile.new(f"{DEFAULT_VOLUME_DIR}/default_volume.mrc", overwrite=True) as mrc:
-            mrc.set_data(default_template.cpu().numpy().astype(np.float32))
-            mrc.voxel_size = [self.simulator.pixel_spacing] * 3
 
         #####################################################################
         ### 1. Calculate default (full length) cross corr and projections ###
@@ -359,7 +348,6 @@ class MosaicsManager(BaseModel):
         alternate_template_iterator = self.template_iterator.alternate_template_iter(
             invert_iterator
         )
-        counter = 0
 
         alternate_template_results = []
         for chains, residues, atom_indices in tqdm.tqdm(
@@ -386,10 +374,7 @@ class MosaicsManager(BaseModel):
                     default_volume=default_template,
                     atom_indices=atom_indices,
                     device=device,
-                    counter=counter
                 )
-                counter += 1
-
             alternate_cc = alternate_cc.cpu().numpy()
             alternate_overlap = alternate_overlap.cpu().numpy()
             alternate_scattering_potential = (
