@@ -44,6 +44,47 @@ AMINO_ACID_RESIDUES = [
     "VAL",
     "UNK",  # Unknown residue
 ]
+GLYCAN_RESIDUES = [
+    "QUI", "KDN", 
+    "FUC", "RIB", 
+    "GMH", "ADA", 
+    "MAL", "UNL", 
+    "ALL", "GAL", 
+    "AHR", "NAG", 
+    "LBT", "G6D", 
+    "GCS", "NEU", 
+    "SIA", "TYV", 
+    "TAL", "MAN", 
+    "LGU", "NDG", 
+    "4YS", "MAV", 
+    "BGC", "WOO", 
+    "BEM", "GL0", 
+    "BAC", "LXC", 
+    "SLB", "FRU", 
+    "GUP", "IDS", 
+    "XYP", "IDO", 
+    "GUL", "PSI", 
+    "PAR", "KDM", 
+    "BDR", "GTR", 
+    "BMA", "A2G", 
+    "DIG", "BDP", 
+    "GLC", "ARA", 
+    "ALT", "TRE", 
+    "BM3", "KDO", 
+    "SUC", "API", 
+    "TAG", "GLO", 
+    "GCU", "RAM", 
+    "IDR", "PA1", 
+    "COL", "FUL", 
+    "OLI", "GLA", 
+    "ABE", "MUR", 
+    "LYX", "DHA", 
+    "SOR", "XYS", 
+    "BGLN", "XYL", 
+    "SGN", "NGA",
+    "SGC", "UNL"  # Unknown ligand 
+]
+
 RNA_RESIDUES = ["A", "C", "G", "U", "N"]
 DNA_RESIDUES = ["A", "C", "G", "T", "N"]
 
@@ -148,6 +189,51 @@ ALL_DNA_ATOMS = [
     "C7",
 ]
 
+ALL_GLYCAN_ATOMS = [
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C5",
+    "C6",
+    "C7",
+    "C8",
+    "N2",
+    "O1",
+    "S4"
+    "O3",
+    "O4",
+    "O5",
+    "O6",
+    "O7",
+    "H1",
+    "H2",
+    "H3",
+    "H4",
+    "H5",
+    "H61",
+    "H62",
+    "H81",
+    "H82",
+    "H83",
+    "HN2",
+    "HO3",
+    "HO6",
+    "O2",
+    "HO2",
+    "HO4",
+    "H63",
+    "C10",
+    "C11", 
+    "C9",
+    "N5",
+    "O10",
+    "O1A",
+    "O1B",
+    "O8",
+    "O9"
+]
+
 # TODO: Make this a lookup table, move to a separate file, or use external package
 MASS_DICT = {"H": 1.01, "C": 12.01, "N": 14.01, "O": 16.00, "S": 32.06, "P": 30.97}
 
@@ -250,10 +336,11 @@ class BaseTemplateIterator(BaseModel):
 
     type: ClassVar[Literal["random", "random_residue", "chain", "residue"]]
 
-    residue_types: list[Literal["amino_acid", "rna", "dna"]]
+    residue_types: list[Literal["amino_acid", "rna", "dna", "glycan"]]
     amino_acid_atoms: list[str] = DEFAULT_AMINO_ACID_ATOMS
     rna_atoms: list[str] = DEFAULT_RNA_ATOMS
     dna_atoms: list[str] = DEFAULT_DNA_ATOMS
+    glycan_atoms: list[str] = ALL_GLYCAN_ATOMS  # for glycans, default is all.
 
     structure_df: ExcludedDataFrame  # NOTE: Comes from Simulator object
 
@@ -289,6 +376,13 @@ class BaseTemplateIterator(BaseModel):
             return ALL_DNA_ATOMS
         return v
 
+    @field_validator('glycan_atoms', mode="before")  # type: ignore
+    def _validate_glycan_atoms(cls, v):
+        """validator to convert "all" to full list of glycan atoms."""
+        if v == ['all']:
+            return ALL_GLYCAN_ATOMS
+        return v
+    
     @abstractmethod
     def alternate_template_iter(
         self, inverted: bool = True
@@ -320,6 +414,8 @@ class BaseTemplateIterator(BaseModel):
             keep_residues.extend(RNA_RESIDUES)
         if "dna" in self.residue_types:
             keep_residues.extend(DNA_RESIDUES)
+        if 'glycan' in self.residue_types:
+            keep_residues.extend(GLYCAN_RESIDUES)
 
         subset_df = self.structure_df[self.structure_df["residue"].isin(keep_residues)]
         subset_df.set_index("original_index", inplace=True, drop=False)
@@ -337,6 +433,8 @@ class BaseTemplateIterator(BaseModel):
             keep_atoms.extend(self.rna_atoms)
         if "dna" in self.residue_types:
             keep_atoms.extend(self.dna_atoms)
+        if "glycan" in self.residue_types: 
+            keep_atoms.extend(self.glycan_atoms)
 
         subset_df = subset_df[subset_df["atom"].isin(keep_atoms)]
         subset_df.set_index("original_index", inplace=True, drop=False)
