@@ -154,6 +154,9 @@ class MosaicsManager(BaseModel):
 
         # Load the pdb file from the Simulator into a DataFrame
         pdb_df = mmdf.read(data["simulator"]["pdb_filepath"])
+        # removes hydrogens from pdb_df if option is enabled
+        if data['simulator'].get('remove_hydrogens', True):
+            pdb_df = pdb_df[pdb_df['element'] != 'H'].reset_index()
         data["template_iterator"]["structure_df"] = pdb_df
 
         # Create the template iterator using the factory method
