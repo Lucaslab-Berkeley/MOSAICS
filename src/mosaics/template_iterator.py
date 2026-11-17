@@ -2,11 +2,11 @@
 
 from abc import abstractmethod
 from collections.abc import Iterator
-from typing import Annotated, Any, ClassVar, Literal
-import warnings
+from typing import Annotated, Any, ClassVar, Literal, Union
 
 import numpy as np
 import pandas as pd
+import warnings
 import torch
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from teamtomo_basemodel import ExcludedDataFrame
@@ -45,6 +45,47 @@ AMINO_ACID_RESIDUES = [
     "VAL",
     "UNK",  # Unknown residue
 ]
+GLYCAN_RESIDUES = [
+    "QUI", "KDN", 
+    "FUC", "RIB", 
+    "GMH", "ADA", 
+    "MAL", "UNL", 
+    "ALL", "GAL", 
+    "AHR", "NAG", 
+    "LBT", "G6D", 
+    "GCS", "NEU", 
+    "SIA", "TYV", 
+    "TAL", "MAN", 
+    "LGU", "NDG", 
+    "4YS", "MAV", 
+    "BGC", "WOO", 
+    "BEM", "GL0", 
+    "BAC", "LXC", 
+    "SLB", "FRU", 
+    "GUP", "IDS", 
+    "XYP", "IDO", 
+    "GUL", "PSI", 
+    "PAR", "KDM", 
+    "BDR", "GTR", 
+    "BMA", "A2G", 
+    "DIG", "BDP", 
+    "GLC", "ARA", 
+    "ALT", "TRE", 
+    "BM3", "KDO", 
+    "SUC", "API", 
+    "TAG", "GLO", 
+    "GCU", "RAM", 
+    "IDR", "PA1", 
+    "COL", "FUL", 
+    "OLI", "GLA", 
+    "ABE", "MUR", 
+    "LYX", "DHA", 
+    "SOR", "XYS", 
+    "BGLN", "XYL", 
+    "SGN", "NGA",
+    "SGC", "UNL"  # Unknown ligand 
+]
+
 RNA_RESIDUES = ["A", "C", "G", "U", "N"]
 DNA_RESIDUES = ["A", "C", "G", "T", "N"]
 
@@ -149,6 +190,44 @@ ALL_DNA_ATOMS = [
     "C7",
 ]
 
+ALL_GLYCAN_ATOMS = [
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C5",
+    "C6",
+    "C7",
+    "C8",
+    "C9",
+    "C10",
+    "C11", 
+    "C12",
+    "O1",
+    "O2",
+    "O3",
+    "O4",
+    "O5",
+    "O6",
+    "O7",
+    "O8",
+    "O9"
+    "O10",
+    "O11",
+    "O1A",
+    "O1B",
+    "N2",
+    "N5",
+    "S4",
+]
+
+GLYCAN_WARNING = ( 
+"Glycan structures can branch, and as such, may not be amenable to "
+"residue-level analyis based on coherent residue windows. "
+"Always be sure to check your PDB structure to confirm which atoms were removed, "
+"and consider using chain-based removal for any experiment with glycans."
+)
+
 # TODO: Make this a lookup table, move to a separate file, or use external package
 MASS_DICT = {"H": 1.01, "C": 12.01, "N": 14.01, "O": 16.00, "S": 32.06, "P": 30.97}
 
@@ -251,10 +330,11 @@ class BaseTemplateIterator(BaseModel):
 
     type: ClassVar[Literal["random", "random_residue", "chain", "residue"]]
 
-    residue_types: list[Literal["amino_acid", "rna", "dna"]]
+    residue_types: list[Literal["amino_acid", "rna", "dna", "glycan"]]
     amino_acid_atoms: list[str] = DEFAULT_AMINO_ACID_ATOMS
     rna_atoms: list[str] = DEFAULT_RNA_ATOMS
     dna_atoms: list[str] = DEFAULT_DNA_ATOMS
+    glycan_atoms: list[str] = ALL_GLYCAN_ATOMS  # for glycans, default is all.
 
     structure_df: ExcludedDataFrame  # NOTE: Comes from Simulator object
 
@@ -290,6 +370,13 @@ class BaseTemplateIterator(BaseModel):
             return ALL_DNA_ATOMS
         return v
 
+    @field_validator('glycan_atoms', mode="before")  # type: ignore
+    def _validate_glycan_atoms(cls, v):
+        """validator to convert "all" to full list of glycan atoms."""
+        if v == ['all']:
+            return ALL_GLYCAN_ATOMS
+        return v
+    
     @abstractmethod
     def alternate_template_iter(
         self, inverted: bool = True
@@ -321,6 +408,8 @@ class BaseTemplateIterator(BaseModel):
             keep_residues.extend(RNA_RESIDUES)
         if "dna" in self.residue_types:
             keep_residues.extend(DNA_RESIDUES)
+        if 'glycan' in self.residue_types:
+            keep_residues.extend(GLYCAN_RESIDUES)
 
         subset_df = self.structure_df[self.structure_df["residue"].isin(keep_residues)]
         subset_df.set_index("original_index", inplace=True, drop=False)
@@ -338,6 +427,8 @@ class BaseTemplateIterator(BaseModel):
             keep_atoms.extend(self.rna_atoms)
         if "dna" in self.residue_types:
             keep_atoms.extend(self.dna_atoms)
+        if "glycan" in self.residue_types: 
+            keep_atoms.extend(self.glycan_atoms)
 
         subset_df = subset_df[subset_df["atom"].isin(keep_atoms)]
         subset_df.set_index("original_index", inplace=True, drop=False)
@@ -358,7 +449,7 @@ class BaseTemplateIterator(BaseModel):
         atom_counts = self.structure_df.iloc[atom_idxs]["element"].value_counts()
         for atom, count in atom_counts.items():
             atom = atom.upper()
-            potentials = get_a_param(atom)
+            potentials = get_a_param([atom])
             potentials = torch.sum(potentials).item()
             total_scattering_potential += potentials * count
 
@@ -433,21 +524,42 @@ class RandomAtomTemplateIterator(BaseTemplateIterator):
 
 
 class ChainTemplateIterator(BaseTemplateIterator):
-    """Iterates over each chain in the structure and removes specified atoms from it.
+    """Iterates over each chain or a selected chain in the structure and removes specified atoms from it.
 
     Attributes
     ----------
     type : Literal["chain"]
         Discriminator field for differentiating between template iterator types.
+    chain_ids : list[str]
+        If populated, denotes the chains to be removed. When empty or None, sets all chains to be removed. Default is None.
     """
 
     type: ClassVar[Literal["chain"]] = "chain"
+    chain_ids: Union[list[str], None] = None
 
+    def __init__(self, **data: Any):
+        super().__init__(**data)
+
+        unique_chains = list(self.structure_df["chain"].unique())
+        # Checks that all chains passed by the user are present in the template. 
+        if self.chain_ids:
+            absent_chains = [
+                chain_id
+                for chain_id in self.chain_ids
+                if chain_id not in unique_chains
+            ]
+            if absent_chains:
+                raise ValueError(
+                    f"Chains {absent_chains} are not present in the template."
+                )
+        else:
+            self.chain_ids = unique_chains
+    
     @property
     def num_alternate_structures(self) -> int:
         """Get the number of alternate structures (i.e. number of chains)."""
-        return len(self.structure_df["chain"].unique())
-
+        return len(self.chain_ids)
+            
     def alternate_template_iter(
         self, inverted: bool = True
     ) -> Iterator[tuple[list[str | None], list[int | None], torch.Tensor]]:
@@ -459,10 +571,10 @@ class ChainTemplateIterator(BaseTemplateIterator):
             If 'True', return the indexes of atoms to remove rather than keep.
         """
         subset_df = self.subset_df_on_residues_and_atoms()
-        unique_chain_ids = subset_df["chain"].unique()
 
-        for chain_id in unique_chain_ids:
+        for chain_id in self.chain_ids:
             residue_ids = subset_df[subset_df["chain"] == chain_id]["residue_id"]
+            
             residue_ids = residue_ids.unique().tolist()
 
             chain_ids = [chain_id] * len(residue_ids)
@@ -497,50 +609,41 @@ class ResidueTemplateIterator(BaseTemplateIterator):
         Discriminator field for differentiating between template iterator types.
     randomize_chain_order : bool
         If 'True', randomize the order of chains in the structure. Default is 'False'.
+    chain_ids : list[str]
+        If populated, denotes the chains to be removed. When empty or None, sets all chains to be removed. Default is None.
     """
 
     type: ClassVar[Literal["residue"]] = "residue"
     num_residues_removed: Annotated[int, Field(gt=0)]
     residue_increment: Annotated[int, Field(gt=0)]
+    chain_ids: Union[list[str] , None] = None
     randomize_chain_order: bool = False
-
-    _chain_order: list[str]
 
     def __init__(self, **data: Any):
         super().__init__(**data)
-
-        # The unique method should retain default order
-        self._chain_order = self.structure_df["chain"].unique()
-        if self.randomize_chain_order:
-            np.random.shuffle(self._chain_order)
-
-    def set_chain_order(self, chain_order: list[str]) -> None:
-        """Set the order of chains to iterate over.
-
-        Parameters
-        ----------
-        chain_order : list[str]
-            List of chain identifiers, in desired order, to use when iterating
-            over the structure.
-
-        Raises
-        ------
-        ValueError
-            If the chain order does not contain all chains in the structure.
-
-        Returns
-        -------
-        None
-        """
-        # Check that all the chains are present in the chain_order list
-        if set(chain_order) != set(self.structure_df["chain"].unique()):
+        if "glycan" in self.residue_types:
             warnings.warn(
-                "The provided chain order does not contain all chains within the "
-                "structure. If this was intentional (e.g. to tile using only a subset "
-                "of chains in the structure) then ignore this warning."
+                GLYCAN_WARNING,
+                stacklevel=1
             )
+        # The unique method should retain default order. 
+        unique_chains = list(self.structure_df["chain"].unique())
+        # check if all chains are present in the dataframe
+        if self.chain_ids:
+            absent_chains = [
+                chain_id
+                for chain_id in self.chain_ids
+                if chain_id not in unique_chains
+            ]
+            if absent_chains:
+                raise ValueError(
+                    f"Chains {absent_chains} are not present in the template."
+                )
+        else:
+            self.chain_ids = unique_chains
+        if self.randomize_chain_order:
+            np.random.shuffle(self.chain_ids)
 
-        self._chain_order = chain_order
 
     @property
     def num_alternate_structures(self) -> int:
@@ -574,7 +677,7 @@ class ResidueTemplateIterator(BaseTemplateIterator):
         # Chunk the df into groups based on chain and re-stich together in order
         # This will ensure that the chain order is respected
         df_list = []
-        for chain in self._chain_order:
+        for chain in self.chain_ids:
             df_list.append(subset_df[subset_df["chain"] == chain])
         ordered_df = pd.concat(df_list)
 
@@ -594,6 +697,7 @@ class ResidueTemplateIterator(BaseTemplateIterator):
             If 'True', return the indexes of atoms to remove rather than keep.
         """
         chain_res_pairs = self.chain_residue_pairs()
+        
         chains = np.array([chain for chain, _ in chain_res_pairs])
         residues = np.array([residue for _, residue in chain_res_pairs])
 
@@ -684,6 +788,11 @@ class RandomResidueTemplateIterator(BaseTemplateIterator):
 
         # Choose which residue indices to remove based on the coherent_removal flag
         if self.coherent_removal:
+            if "glycan" in self.residue_types:
+                warnings.warn(
+                    GLYCAN_WARNING,
+                    stacklevel=1
+                )
             start_indexes = np.random.randint(
                 0,
                 len(chain_res_pairs) - self.num_residues_removed + 1,
