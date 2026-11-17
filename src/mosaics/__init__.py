@@ -1,13 +1,12 @@
 """Main module for MOSAICS package."""
 
-from .template_iterator import (
-    RandomAtomTemplateIterator,
-    ChainTemplateIterator,
-    ResidueTemplateIterator,
-)
 from .mosaics_manager import MosaicsManager
 from .mosaics_result import MosaicsResult
-
+from .template_iterator import (
+    ChainTemplateIterator,
+    RandomAtomTemplateIterator,
+    ResidueTemplateIterator,
+)
 
 __all__ = [
     "RandomAtomTemplateIterator",
