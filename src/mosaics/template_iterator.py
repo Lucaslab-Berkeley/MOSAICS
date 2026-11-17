@@ -449,12 +449,10 @@ class ChainTemplateIterator(BaseTemplateIterator):
         super().__init__(**data)
 
         unique_chains = list(self.structure_df["chain"].unique())
-        # Checks that all chains passed by the user are present in the template. 
+        # Checks that all chains passed by the user are present in the template.
         if self.chain_ids:
             absent_chains = [
-                chain_id
-                for chain_id in self.chain_ids
-                if chain_id not in unique_chains
+                chain_id for chain_id in self.chain_ids if chain_id not in unique_chains
             ]
             if absent_chains:
                 raise ValueError(
@@ -462,12 +460,12 @@ class ChainTemplateIterator(BaseTemplateIterator):
                 )
         else:
             self.chain_ids = unique_chains
-    
+
     @property
     def num_alternate_structures(self) -> int:
         """Get the number of alternate structures (i.e. number of chains)."""
         return len(self.chain_ids)
-            
+
     def alternate_template_iter(
         self, inverted: bool = True
     ) -> Iterator[tuple[list[str | None], list[int | None], torch.Tensor]]:
@@ -482,7 +480,7 @@ class ChainTemplateIterator(BaseTemplateIterator):
 
         for chain_id in self.chain_ids:
             residue_ids = subset_df[subset_df["chain"] == chain_id]["residue_id"]
-            
+
             residue_ids = residue_ids.unique().tolist()
 
             chain_ids = [chain_id] * len(residue_ids)
@@ -524,19 +522,17 @@ class ResidueTemplateIterator(BaseTemplateIterator):
     type: ClassVar[Literal["residue"]] = "residue"
     num_residues_removed: Annotated[int, Field(gt=0)]
     residue_increment: Annotated[int, Field(gt=0)]
-    chain_ids: Union[list[str] , None] = None
+    chain_ids: Union[list[str], None] = None
     randomize_chain_order: bool = False
 
     def __init__(self, **data: Any):
         super().__init__(**data)
-        # The unique method should retain default order. 
+        # The unique method should retain default order.
         unique_chains = list(self.structure_df["chain"].unique())
         # check if all chains are present in the dataframe
         if self.chain_ids:
             absent_chains = [
-                chain_id
-                for chain_id in self.chain_ids
-                if chain_id not in unique_chains
+                chain_id for chain_id in self.chain_ids if chain_id not in unique_chains
             ]
             if absent_chains:
                 raise ValueError(
@@ -546,7 +542,6 @@ class ResidueTemplateIterator(BaseTemplateIterator):
             self.chain_ids = unique_chains
         if self.randomize_chain_order:
             np.random.shuffle(self.chain_ids)
-
 
     @property
     def num_alternate_structures(self) -> int:
