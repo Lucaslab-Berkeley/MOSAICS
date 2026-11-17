@@ -4,18 +4,9 @@ import warnings
 from typing import Literal, Union
 
 import mmdf
-import numpy as np
-import roma
 import torch
 import tqdm
 import yaml  # type: ignore
-from leopard_em.pydantic_models.config import PreprocessingFilters
-from leopard_em.pydantic_models.data_structures import ParticleStack
-from leopard_em.utils.ctf_utils import (
-   _setup_ctf_kwargs_from_particle_stack,
-   calculate_ctf_filter_stack_full_args,
-)
-from leopard_em.utils.backend_setup import setup_images_filters_particle_stack
 from pydantic import BaseModel
 from ttsim3d.models import Simulator
 from torch_fourier_slice import project_3d_to_2d
@@ -159,6 +150,9 @@ class MosaicsManager(BaseModel):
 
         # Load the pdb file from the Simulator into a DataFrame
         pdb_df = mmdf.read(data["simulator"]["pdb_filepath"])
+        # removes hydrogens from pdb_df if option is enabled
+        if data['simulator'].get('remove_hydrogens', True):
+            pdb_df = pdb_df[pdb_df['element'] != 'H'].reset_index()
         data["template_iterator"]["structure_df"] = pdb_df
 
         # Create the template iterator using the factory method
@@ -317,7 +311,7 @@ class MosaicsManager(BaseModel):
 
             if _box_size_is_same:
                 warnings.warn(
-                    warning_message=SAME_BOX_SIZE_WARNING,
+                    message=SAME_BOX_SIZE_WARNING,
                     category=RuntimeWarning,
                     stacklevel=2,
                 )
