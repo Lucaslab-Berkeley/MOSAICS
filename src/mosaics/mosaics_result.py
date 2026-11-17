@@ -145,8 +145,7 @@ class MosaicsResult(BaseModel):
         The returned DataFrame will have following columns:
         - particle_id: The particle ID, defaults to ['part_0', 'part_1', ...]
         - default_cc: The default cross-correlation value
-        - default_overlap: The overlap between the default model projections and the
-          perfect projections
+        - default_overlap: The default template autocorrelation s_t = ||t||^2
         - alt_cc_0: The cross-correlation value for the first alternate model
         - alt_cc_1: The cross-correlation value for the second alternate model
         ...
@@ -200,9 +199,9 @@ class MosaicsResult(BaseModel):
             the default and alternate cross-correlation values as numpy arrays.
             - The first array is the default cross-correlation values
             - The second array is the alternate cross-correlation values per particle
-            - The third array is the default overlaps between perfect projections
-            - The fourth array is the alternate overlaps between perfect projections
-              and each of the alternate models.
+            - The third array is the default template autocorrelation s_t = ||t||^2
+            - The fourth array is the overlap <t, t*> between the default template
+              and each of the alternate templates.
         """
         default_cc = np.array(self.default_cross_correlation)
         default_overlap = np.array(self.default_overlap)

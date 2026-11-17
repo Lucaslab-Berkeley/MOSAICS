@@ -4,13 +4,13 @@ import numpy as np
 import pytest
 import roma
 import torch
+from leopard_em.utils.fourier_slice import volume_to_rfft_fourier_slice
 
 from mosaics.cross_correlation_core import (
     alternate_template_statistics,
     cross_correlate_particle_stack,
     project_filtered_templates,
 )
-from mosaics.mosaics_manager import _volume_to_template_dft
 from mosaics.mosaics_result import AlternateTemplateResult, MosaicsResult
 
 BOX = 32
@@ -39,7 +39,7 @@ def setup():
     images = torch.randn(num, BOX, BOX, generator=gen)
     return {
         "dft": {
-            name: _volume_to_template_dft(v)
+            name: volume_to_rfft_fourier_slice(v)
             for name, v in [("t", default), ("ts", alternate), ("h", removed)]
         },
         "rotmats": rotmats,

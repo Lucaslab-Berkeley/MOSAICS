@@ -7,8 +7,8 @@ import mmdf
 import torch
 import tqdm
 import yaml  # type: ignore
+from leopard_em.utils.fourier_slice import volume_to_rfft_fourier_slice
 from pydantic import BaseModel
-from torch_fourier_slice import project_3d_to_2d
 from ttsim3d.models import Simulator
 
 from .cross_correlation_core import (
@@ -66,51 +66,6 @@ def _center_images_by_correlations(
     max_cc_values *= factor
 
     return max_cc_values, centered_images
-
-
-def _get_full_length_projections(
-    default_volume: torch.Tensor,
-    rotation_matrices: torch.Tensor,
-    projective_filters: torch.Tensor,
-    batch_size: int = 2048,
-) -> torch.Tensor:
-    """Calculate the full-length projections for the default template.
-
-    NOTE: Kept for backwards compatibility only. These projections are computed from
-    a padded volume and so differ slightly (interpolation) from the templates used
-    for cross-correlation. Use `project_filtered_templates` instead.
-    """
-    full_length_projections = torch.zeros(
-        (
-            rotation_matrices.shape[0],
-            default_volume.shape[-2],
-            default_volume.shape[-1],
-        ),
-        device=default_volume.device,
-    )
-
-    for i in range(0, rotation_matrices.shape[0], batch_size):
-        batch_rotation_matrices = rotation_matrices[i : i + batch_size]
-        batch_projective_filters = projective_filters[i : i + batch_size]
-
-        batch_projections = project_3d_to_2d(
-            volume=default_volume, rotation_matrices=batch_rotation_matrices
-        )
-        batch_projections_dft = torch.fft.rfftn(batch_projections, dim=(-2, -1))
-        batch_projections_dft *= batch_projective_filters
-        batch_projections_dft *= -1
-        batch_projections = torch.fft.irfftn(batch_projections_dft, dim=(-2, -1))
-
-        full_length_projections[i : i + batch_size] = batch_projections
-
-    return full_length_projections
-
-
-def _volume_to_template_dft(volume: torch.Tensor) -> torch.Tensor:
-    """Real-Fourier transform a volume into the layout used for slice extraction."""
-    volume = torch.fft.fftshift(volume)
-    volume_dft = torch.fft.rfftn(volume, dim=(-3, -2, -1))
-    return torch.fft.fftshift(volume_dft, dim=(-3, -2))
 
 
 class MosaicsManager(BaseModel):
@@ -230,11 +185,13 @@ class MosaicsManager(BaseModel):
             removed_volume = default_volume - simulated_volume
             alternate_volume = simulated_volume
 
+        # Use the same volume -> DFT transform (incl. the sinc^2 interpolation
+        # correction) as the default template, so that t = t* + h holds exactly.
         return alternate_template_statistics(
             particle_stack_images=particle_images,
             default_projections=full_length_projections,
-            alternate_template_dft=_volume_to_template_dft(alternate_volume),
-            removed_template_dft=_volume_to_template_dft(removed_volume),
+            alternate_template_dft=volume_to_rfft_fourier_slice(alternate_volume),
+            removed_template_dft=volume_to_rfft_fourier_slice(removed_volume),
             rotation_matrices=rotation_matrices,
             projective_filters=projective_filters,
             batch_size=batch_size,
