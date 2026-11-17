@@ -7,16 +7,16 @@ ERR_MSG = (
 
 
 import numpy as np
-import torch
 import roma
-from pydantic import BaseModel
+import torch
 from leopard_em.pydantic_models.config import PreprocessingFilters
 from leopard_em.pydantic_models.data_structures import ParticleStack
-from leopard_em.pydantic_models.utils import (
+from leopard_em.utils.backend_setup import setup_images_filters_particle_stack
+from leopard_em.utils.ctf_utils import (
     _setup_ctf_kwargs_from_particle_stack,
     calculate_ctf_filter_stack_full_args,
-    setup_images_filters_particle_stack,
 )
+from pydantic import BaseModel
 from ttsim3d.models import Simulator
 
 

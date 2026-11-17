@@ -1,8 +1,6 @@
 """Cross-correlation functions for the MOSAICS package."""
 
 import torch
-
-# from leopard_em.backend.utils import normalize_template_projections
 from torch_fourier_slice import extract_central_slices_rfft_3d
 
 
