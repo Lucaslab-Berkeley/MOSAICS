@@ -358,7 +358,7 @@ class BaseTemplateIterator(BaseModel):
         atom_counts = self.structure_df.iloc[atom_idxs]["element"].value_counts()
         for atom, count in atom_counts.items():
             atom = atom.upper()
-            potentials = get_a_param(atom)
+            potentials = get_a_param([atom])
             potentials = torch.sum(potentials).item()
             total_scattering_potential += potentials * count
 
