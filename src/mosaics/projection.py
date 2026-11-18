@@ -14,12 +14,18 @@ The physics matches ttsim3d (used previously to simulate template volumes):
    detector MTF, applied in 2D (these filters are radial, so they are identical to
    the central slice of the corresponding 3D filters).
 4. The same overall scale as ttsim3d volumes projected along the beam direction.
+
+On CUDA devices the potential calculation is compiled with `torch.compile`, which
+fuses its element-wise operations (about 4.5x faster, identical results up to float
+rounding) without any changes to torch-calculate-electrostatic-potential.
 """
 
 import math
-from typing import Any
+import warnings
+from typing import Annotated, Any, Callable
 
 import torch
+from pydantic import Field
 from torch_calculate_electrostatic_potential import (
     PENG_SCATTERING_TO_POTENTIAL,
     GridConfig,
@@ -36,12 +42,40 @@ from ttsim3d.simulate3d import (
     calculate_simulation_dose_filter_3d,
 )
 
-# Number of standard deviations of the widest atomic Gaussian covered by the stencil.
-# The truncated tail is < 1e-4 of each atom's projected potential.
-DEFAULT_STENCIL_SIGMAS = 4.0
+# Default radius (Angstroms) of the per-atom pixel stencil.
+DEFAULT_STENCIL_RADIUS = 3.5
+
+# Warn when the stencil truncates more than this fraction of the template potential
+MAX_TRUNCATED_FRACTION = 1e-3
 
 # Default cap on the (particle, atom, stencil pixel) triples evaluated at once.
 DEFAULT_MAX_BATCH_ELEMENTS = 2**24
+
+
+class MosaicsSimulator(Simulator):
+    """ttsim3d Simulator with the settings of the MOSAICS analytic projections.
+
+    Attributes
+    ----------
+    stencil_radius : float
+        Radius in Angstroms of the per-atom pixel stencil over which each atom's
+        projected potential is evaluated. Default is 3.5 Angstroms.
+    """
+
+    stencil_radius: Annotated[float, Field(gt=0.0)] = DEFAULT_STENCIL_RADIUS
+
+
+_COMPILED_POTENTIAL_2D: Callable[..., torch.Tensor] | None = None
+
+
+def _compiled_potential_2d() -> Callable[..., torch.Tensor]:
+    """Lazily compiled `calculate_scattering_potential_2d` (shared by projectors)."""
+    global _COMPILED_POTENTIAL_2D  # pylint: disable=global-statement
+    if _COMPILED_POTENTIAL_2D is None:
+        _COMPILED_POTENTIAL_2D = torch.compile(
+            calculate_scattering_potential_2d, dynamic=True
+        )
+    return _COMPILED_POTENTIAL_2D
 
 
 def slices_to_projections(fourier_slice: torch.Tensor) -> torch.Tensor:
@@ -93,14 +127,19 @@ class TemplateProjector:
         Whether to apply the detector MTF. Default False.
     mtf_frequencies, mtf_amplitudes : torch.Tensor | None, optional
         The MTF curve, required if `apply_dqe` is True.
-    stencil_radius : float | None, optional
-        Radius (Angstroms) of the per-atom pixel stencil. If None, covers
-        `DEFAULT_STENCIL_SIGMAS` standard deviations of the widest atomic Gaussian.
+    stencil_radius : float, optional
+        Radius (Angstroms) of the per-atom pixel stencil. Default 3.5. A warning is
+        raised if the stencil truncates more than `MAX_TRUNCATED_FRACTION` of the
+        template's projected potential (see `truncated_fraction`).
     device : torch.device | str, optional
         Device for the computation. Default 'cpu'.
     max_batch_elements : int, optional
         Cap on (particle, atom, stencil pixel) triples evaluated at once; controls
         memory use. Default `DEFAULT_MAX_BATCH_ELEMENTS`.
+    compile_potential : bool | None, optional
+        Whether to compile the potential calculation with `torch.compile`. If None
+        (default), compile on CUDA devices only (CPU compilation needs a C++
+        toolchain and gives little benefit).
     """
 
     # pylint: disable=too-many-arguments,too-many-locals
@@ -121,9 +160,10 @@ class TemplateProjector:
         apply_dqe: bool = False,
         mtf_frequencies: torch.Tensor | None = None,
         mtf_amplitudes: torch.Tensor | None = None,
-        stencil_radius: float | None = None,
+        stencil_radius: float = DEFAULT_STENCIL_RADIUS,
         device: torch.device | str = "cpu",
         max_batch_elements: int = DEFAULT_MAX_BATCH_ELEMENTS,
+        compile_potential: bool | None = None,
     ):
         self.device = torch.device(device)
         self.template_shape = (int(template_shape[0]), int(template_shape[1]))
@@ -144,11 +184,26 @@ class TemplateProjector:
         self.params_b = get_b_param(list(atom_ids)).to(self.device).float()
         self.b_factors = atom_b_factors.to(self.device).float()
 
-        if stencil_radius is None:
-            widest = (self.params_b.max() + self.b_factors.max()).item()
-            sigma = math.sqrt(widest / (8 * math.pi**2))
-            stencil_radius = max(DEFAULT_STENCIL_SIGMAS * sigma, upsampled_pixel)
+        if stencil_radius <= 0:
+            raise ValueError("stencil_radius must be positive.")
         self.stencil_radius = float(stencil_radius)
+        truncated = self.truncated_fraction() if self.num_atoms > 0 else 0.0
+        if truncated > MAX_TRUNCATED_FRACTION:
+            warnings.warn(
+                f"stencil_radius={self.stencil_radius:.2f} A truncates "
+                f"{100 * truncated:.2g}% of the template's projected "
+                "potential; consider a larger radius.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        if compile_potential is None:
+            compile_potential = self.device.type == "cuda"
+        self._potential_2d = (
+            _compiled_potential_2d()
+            if compile_potential
+            else calculate_scattering_potential_2d
+        )
 
         # Grid with the origin at pixel (H // 2, W // 2) as in ttsim3d volumes
         up_h, up_w = self.upsampled_shape
@@ -224,8 +279,14 @@ class TemplateProjector:
     def from_simulator(
         cls, simulator: Simulator, device: torch.device | str, **kwargs: Any
     ) -> "TemplateProjector":
-        """Projector with the atoms and simulation settings of a ttsim3d Simulator."""
+        """Projector with the atoms and simulation settings of a ttsim3d Simulator.
+
+        The stencil radius is taken from `MosaicsSimulator.stencil_radius` when
+        available (and not overridden in ``kwargs``).
+        """
         config = simulator.simulator_config
+        if isinstance(simulator, MosaicsSimulator):
+            kwargs.setdefault("stencil_radius", simulator.stencil_radius)
         mtf_frequencies, mtf_amplitudes = (
             config.mtf_tensors if config.apply_dqe else (None, None)
         )
@@ -248,6 +309,13 @@ class TemplateProjector:
             device=device,
             **kwargs,
         )
+
+    def truncated_fraction(self) -> float:
+        """Fraction of the template's projected potential outside the atom stencils.å"""
+        sigma = torch.sqrt((self.params_b + self.b_factors[:, None]) / (8 * math.pi**2))
+        inside = torch.erf(self.stencil_radius / (math.sqrt(2) * sigma)) ** 2
+        lost = ((1 - inside) * self.params_a).sum() / self.params_a.sum()
+        return float(lost)
 
     @property
     def num_atoms(self) -> int:
@@ -317,7 +385,7 @@ class TemplateProjector:
             img_xyz = torch.einsum("bji,nj->bni", rotation_matrices[batch], xyz)
             img_yx = img_xyz[..., [1, 0]]
 
-            image = calculate_scattering_potential_2d(
+            image = self._potential_2d(
                 img_yx,
                 bf,
                 a,

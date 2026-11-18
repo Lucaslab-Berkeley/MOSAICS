@@ -11,6 +11,9 @@ import roma
 import torch
 from leopard_em.pydantic_models.config import PreprocessingFilters
 from leopard_em.pydantic_models.data_structures import ParticleStack
+from leopard_em.pydantic_models.data_structures.particle_stack import (
+    ParticleStackCSV,
+)
 from leopard_em.utils.backend_setup import setup_images_filters_particle_stack
 from leopard_em.utils.ctf_utils import (
     _setup_ctf_kwargs_from_particle_stack,
@@ -18,6 +21,17 @@ from leopard_em.utils.ctf_utils import (
 )
 from pydantic import BaseModel
 from ttsim3d.models import Simulator
+
+
+def subset_particle_stack(
+    particle_stack: ParticleStackCSV, rows: slice
+) -> ParticleStackCSV:
+    """A copy of a particle stack restricted to a contiguous range of rows."""
+    subset = type(particle_stack)(skip_df_load=True, **particle_stack.model_dump())
+    subset_df = particle_stack.get_dataframe_copy().iloc[rows]
+    # pylint: disable=protected-access
+    subset._set_dataframe(subset_df.reset_index(drop=True))
+    return subset
 
 
 class MosaicsDataset(BaseModel):
@@ -45,9 +59,11 @@ class MosaicsDataset(BaseModel):
 
     Methods
     -------
-    process_inputs(device: torch.device, simulator: Simulator) -> None
+    process_inputs(device, simulator, particle_rows=None) -> None
         Process the raw inputs (particle stack and template shape) into the necessary
-        variables for running MOSAICS.
+        variables for running MOSAICS, optionally for a range of particles only.
+    pop_particle_images() -> torch.Tensor
+        Return the particle images and drop the dataset's reference to them.
     save_to_cache(cache_path: str) -> None
         Saves the pre-processed dataset to a cache file for future reuse.
     load_from_cache(cache_path: str, device: torch.device) -> None
@@ -79,7 +95,26 @@ class MosaicsDataset(BaseModel):
             raise ValueError(ERR_MSG)
         return self._particle_images
 
-    def process_inputs(self, device: torch.device, simulator: Simulator) -> None:
+    @property
+    def num_particles(self) -> int:
+        """Number of particles in the particle stack."""
+        return int(self.particle_stack.num_particles)
+
+    def pop_particle_images(self) -> torch.Tensor:
+        """Return the particle images and drop the dataset's reference to them.
+
+        Lets the caller free the (un-centered) images once they are no longer needed.
+        """
+        particle_images = self.particle_images
+        self._particle_images = None
+        return particle_images
+
+    def process_inputs(
+        self,
+        device: torch.device,
+        simulator: Simulator,
+        particle_rows: slice | None = None,
+    ) -> None:
         """Process inputs to necessary variables for running MOSAICS.
 
         Parameters
@@ -89,12 +124,19 @@ class MosaicsDataset(BaseModel):
         simulator : Simulator
             Simulator object defining the template; only its volume shape (the
             template projection size) is used here.
+        particle_rows : slice | None, optional
+            If given, only process this contiguous range of rows of the particle
+            stack. The processed variables then hold only these particles. Default
+            is None, which processes all particles.
 
         Returns
         -------
         None
         """
         template_h, template_w = simulator.volume_shape[-2:]
+        particle_stack = self.particle_stack
+        if particle_rows is not None:
+            particle_stack = subset_particle_stack(particle_stack, particle_rows)
 
         # NOTE: Leopard-EM only uses the template for its device, its shape (to size
         # the projective filters), and a template DFT which MOSAICS does not need
@@ -102,7 +144,7 @@ class MosaicsDataset(BaseModel):
         template_placeholder = torch.zeros((1, template_h, template_w), device=device)
         particle_images_dft, _, projective_filters = (
             setup_images_filters_particle_stack(
-                particle_stack=self.particle_stack,
+                particle_stack=particle_stack,
                 preprocessing_filters=self.preprocessing_filters,
                 template=template_placeholder,
             )
@@ -111,10 +153,10 @@ class MosaicsDataset(BaseModel):
         particle_images *= torch.numel(particle_images[0]) ** 0.5  # normalize
 
         # Calculate the per-particle CTF array and combine it with projective filters
-        defocus_u, defocus_v = self.particle_stack.get_absolute_defocus()
-        defocus_angle = torch.tensor(self.particle_stack["astigmatism_angle"])
+        defocus_u, defocus_v = particle_stack.get_absolute_defocus()
+        defocus_angle = torch.tensor(particle_stack["astigmatism_angle"])
         ctf_kwargs = _setup_ctf_kwargs_from_particle_stack(
-            self.particle_stack, (template_h, template_w)
+            particle_stack, (template_h, template_w)
         )
         ctf_filters = calculate_ctf_filter_stack_full_args(
             defocus_u=defocus_u,  # in Angstrom
@@ -131,7 +173,7 @@ class MosaicsDataset(BaseModel):
         projective_filters = projective_filters * ctf_filters
 
         # Grab the per-particle orientations preferring refined angles (if they exist)
-        euler_angles = self.particle_stack.get_euler_angles(prefer_refined_angles=True)
+        euler_angles = particle_stack.get_euler_angles(prefer_refined_angles=True)
         rotation_matrices = roma.euler_to_rotmat("ZYZ", euler_angles, degrees=True)
         rotation_matrices = rotation_matrices.float()
 

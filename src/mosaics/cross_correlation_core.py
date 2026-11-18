@@ -28,7 +28,7 @@ def _correlate(
     projections: torch.Tensor,  # (n, h, w)
 ) -> torch.Tensor:  # (n,) or (n, H-h+1, W-w+1)
     """Inner products <I, t> (same size) or valid cross-correlations (larger images).
-    
+
     Parameters
     ----------
     particle_stack_images : torch.Tensor
@@ -36,7 +36,7 @@ def _correlate(
     projections : torch.Tensor
         Filtered real-space template projections (centered), shape (N, h, w),
         e.g. from `project_filtered_templates`.
-    
+
     Returns
     -------
     torch.Tensor

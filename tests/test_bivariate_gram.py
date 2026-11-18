@@ -1,9 +1,13 @@
 """Tests for the analytic template projections and the bivariate Gram entries."""
 
+from pathlib import Path
+
+import mmdf
 import numpy as np
 import pytest
 import roma
 import torch
+from pydantic import ValidationError
 from ttsim3d.models import SimulatorConfig
 from ttsim3d.simulate3d import simulate3d
 
@@ -12,9 +16,18 @@ from mosaics.cross_correlation_core import (
     cross_correlate_particle_stack,
     project_filtered_templates,
 )
+from mosaics.mosaics_dataset import MosaicsDataset
 from mosaics.mosaics_manager import MosaicsManager
 from mosaics.mosaics_result import AlternateTemplateResult, MosaicsResult
-from mosaics.projection import TemplateProjector, slices_to_projections
+from mosaics.projection import (
+    DEFAULT_STENCIL_RADIUS,
+    MosaicsSimulator,
+    TemplateProjector,
+    slices_to_projections,
+)
+from mosaics.template_iterator import instantiate_template_iterator
+
+PDB_PATH = Path(__file__).resolve().parents[1] / "docs" / "_static" / "1mh1.pdb"
 
 BOX = 32
 PIXEL = 1.0
@@ -306,3 +319,124 @@ def test_result_round_trip_and_backwards_compatibility():
     old = MosaicsResult.model_validate_json(old_json)
     with pytest.raises(ValueError, match="Gram entries"):
         old.bivariate_arrays()
+
+
+def _small_simulator(**kwargs) -> MosaicsSimulator:
+    # Uniform B-factors as in typical 2DTM templates (the PDB B-factors are large
+    # enough that the default stencil would warn about truncation)
+    return MosaicsSimulator(
+        pdb_filepath=str(PDB_PATH),
+        pixel_spacing=1.0,
+        volume_shape=(64, 64, 64),
+        b_factor_scaling=0.0,
+        additional_b_factor=60.0,
+        simulator_config={"voltage": 300.0, "upsampling": 2, "apply_dqe": False},
+        **kwargs,
+    )
+
+
+def test_simulator_stencil_radius():
+    """The stencil radius is configured on the MOSAICS simulator."""
+    simulator = _small_simulator()
+    assert simulator.stencil_radius == DEFAULT_STENCIL_RADIUS == 3.5
+    assert TemplateProjector.from_simulator(simulator, "cpu").stencil_radius == 3.5
+
+    simulator = _small_simulator(stencil_radius=5.0)
+    assert TemplateProjector.from_simulator(simulator, "cpu").stencil_radius == 5.0
+    assert simulator.model_dump()["stencil_radius"] == 5.0
+
+    with pytest.raises(ValidationError):
+        _small_simulator(stencil_radius=0.0)
+
+
+def test_small_stencil_warns(setup):
+    s = setup
+    with pytest.warns(UserWarning, match="stencil_radius"):
+        TemplateProjector(
+            s["positions"],
+            s["atom_ids"],
+            s["b_factors"],
+            PIXEL,
+            (BOX, BOX),
+            stencil_radius=1.0,
+        )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_compiled_projections_match_eager(setup):
+    """torch.compile of the potential calculation does not change the results."""
+    s = setup
+    kwargs = {
+        "atom_positions_zyx": s["positions"],
+        "atom_ids": s["atom_ids"],
+        "atom_b_factors": s["b_factors"],
+        "pixel_size": PIXEL,
+        "template_shape": (BOX, BOX),
+        "device": "cuda",
+    }
+    filters = s["filters"].cuda()
+    eager = TemplateProjector(**kwargs, compile_potential=False)
+    compiled = TemplateProjector(**kwargs)  # compiled by default on CUDA
+    for atoms in (None, s["removed"]):
+        a = eager.fourier_slices(s["rotmats"], filters, atoms)
+        b = compiled.fourier_slices(s["rotmats"], filters, atoms)
+        scale = a.abs().max()
+        torch.testing.assert_close(b / scale, a / scale, rtol=0, atol=1e-5)
+
+
+@pytest.fixture(scope="module")
+def particle_cache(tmp_path_factory):
+    """Cached (pre-processed) synthetic particles for end-to-end runs."""
+    gen = torch.Generator().manual_seed(3)
+    num = 7
+    path = tmp_path_factory.mktemp("cache") / "particles.npz"
+    np.savez(
+        path,
+        rotation_matrices=roma.random_rotmat(num).float().numpy(),
+        projective_filters=(0.5 + torch.rand(num, 64, 33, generator=gen)).numpy(),
+        particle_images=torch.randn(num, 64, 64, generator=gen).numpy(),
+    )
+    return str(path)
+
+
+@pytest.mark.parametrize(
+    "iterator_config",
+    [
+        {"type": "residue", "num_residues_removed": 40, "residue_increment": 40},
+        {"type": "random", "num_atoms_removed": 25, "num_alternate_structures": 3},
+    ],
+    ids=["residue", "random"],
+)
+def test_run_mosaics_particle_chunks(particle_cache, iterator_config):
+    """Processing particles in chunks gives the same results as all at once."""
+    iterator = instantiate_template_iterator(
+        {
+            **iterator_config,
+            "residue_types": ["amino_acid"],
+            "structure_df": mmdf.read(str(PDB_PATH)),
+        }
+    )
+    manager = MosaicsManager.model_construct(
+        simulator=_small_simulator(),
+        template_iterator=iterator,
+        dataset=MosaicsDataset.model_construct(),
+        sim_removed_atoms_only=True,
+        particle_positions_are_centered=True,
+    )
+
+    results = []
+    for chunk_size in (None, 3):
+        np.random.seed(0)  # same random alternates for both runs
+        results.append(
+            manager.run_mosaics(
+                "cpu",
+                batch_size=2,
+                cache_path=particle_cache,
+                particle_chunk_size=chunk_size,
+            )
+        )
+    full, chunked = (r.bivariate_arrays() for r in results)
+    assert full["c"].shape == (7,)
+    assert full["c_star"].shape[1] == len(results[0].alternate_template_results) > 1
+    for key, value in full.items():
+        np.testing.assert_allclose(chunked[key], value, rtol=1e-5, atol=1e-6)

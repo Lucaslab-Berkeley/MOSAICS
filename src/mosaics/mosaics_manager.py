@@ -4,11 +4,11 @@ import warnings
 from typing import Literal, Union
 
 import mmdf
+import numpy as np
 import torch
 import tqdm
 import yaml  # type: ignore
 from pydantic import BaseModel
-from ttsim3d.models import Simulator
 
 from .cross_correlation_core import (
     alternate_template_statistics,
@@ -17,7 +17,7 @@ from .cross_correlation_core import (
 )
 from .mosaics_dataset import MosaicsDataset
 from .mosaics_result import AlternateTemplateResult, MosaicsResult
-from .projection import TemplateProjector
+from .projection import MosaicsSimulator, TemplateProjector
 from .template_iterator import BaseTemplateIterator, instantiate_template_iterator
 
 SAME_BOX_SIZE_WARNING = (
@@ -73,8 +73,10 @@ class MosaicsManager(BaseModel):
 
     Attributes
     ----------
-    simulator : Simulator
-        Instance of Simulator model from ttsim3d package. Holds the pdb file and
+    simulator : MosaicsSimulator
+        Instance of MosaicsSimulator, the ttsim3d Simulator model extended with the
+        settings of the analytic projections (e.g. 'stencil_radius'). Holds the pdb
+        file and
         associated atom positions, bfactors, etc. along with the simulation settings
         (dose weighting, MTF, upsampling). Template projections are computed
         analytically from these atoms (see `mosaics.projection.TemplateProjector`);
@@ -98,7 +100,7 @@ class MosaicsManager(BaseModel):
         shift.
     """
 
-    simulator: Simulator
+    simulator: MosaicsSimulator
     template_iterator: BaseTemplateIterator
     dataset: MosaicsDataset
     sim_removed_atoms_only: bool = True
@@ -190,49 +192,41 @@ class MosaicsManager(BaseModel):
             batch_size=batch_size,
         )
 
-    def run_mosaics(
+    def _process_particle_chunk(
         self,
-        gpu_id: Union[Literal["cpu"], int],
-        batch_size: int = 2048,
-        cache_path: Union[None, str] = None,
-    ) -> MosaicsResult:
-        """Run the MOSAICS program.
+        inputs: dict[str, torch.Tensor],
+        projector: TemplateProjector,
+        alternates: list[tuple],
+        batch_size: int,
+        desc: str,
+    ) -> tuple[np.ndarray, np.ndarray, list[dict[str, np.ndarray]]]:
+        """Default and alternate template statistics for one chunk of particles.
 
         Parameters
         ----------
-        gpu_id : Union[Literal["cpu"], int]
-            The GPU ID to use for the computation. Can either be the string "cpu" to
-            use the CPU, or an integer specifying the GPU ID. All other values are
-            invalid.
-        batch_size : int, optional
-            The batch size -- number of particle images to process at once -- to use
-            for the cross-correlation calculations. The default is 2048.
-        cache_path : Union[None, str], optional
-            If a string is provided, then the path is assumed to contain a .npz file
-            which contains pre-computed dataset variables. Useful when many experiments
-            are being run in sequence. Default is None, which means no cache file is
-            used.
+        inputs : dict[str, torch.Tensor]
+            The chunk's 'rotation_matrices', 'projective_filters' and
+            'particle_images'. The images are popped from the dict so that the
+            uncentered stack is freed once the images have been centered.
+        projector : TemplateProjector
+            The analytic projector holding all template atoms.
+        alternates : list[tuple]
+            The (chains, residues, atom_indices) of each alternate template.
+        batch_size : int
+            Number of particles processed at once.
+        desc : str
+            Progress bar description.
+
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray, list[dict[str, np.ndarray]]]
+            The default cross-correlations, the default template autocorrelations
+            and, per alternate template, the statistics of
+            `alternate_template_statistics`.
         """
-        if gpu_id == "cpu":
-            device = torch.device("cpu")
-        elif isinstance(gpu_id, int) and gpu_id >= 0:
-            device = torch.device(f"cuda:{gpu_id}")
-        else:
-            raise ValueError(
-                f"Invalid gpu_id: {gpu_id}. Must be 'cpu' or a non-negative integer."
-            )
-
-        # Load or process the dataset
-        if cache_path is not None:
-            self.dataset.load_from_cache(cache_path, device)
-        else:
-            self.dataset.process_inputs(device, self.simulator)
-
-        # Extract processed variables from dataset
-        rotation_matrices = self.dataset.rotation_matrices
-        projective_filters = self.dataset.projective_filters
-        particle_images = self.dataset.particle_images
-        projector = TemplateProjector.from_simulator(self.simulator, device)
+        rotation_matrices = inputs["rotation_matrices"]
+        projective_filters = inputs["projective_filters"]
+        particle_images = inputs.pop("particle_images")
 
         #####################################################################
         ### 1. Calculate default (full length) cross corr and projections ###
@@ -253,10 +247,6 @@ class MosaicsManager(BaseModel):
             batch_size=batch_size,
         )
 
-        default_scattering_potential = (
-            self.template_iterator.get_template_scattering_potential(None)
-        )
-
         ######################################################
         ### 2. Determine the position of correlogram peaks ###
         ######################################################
@@ -271,21 +261,21 @@ class MosaicsManager(BaseModel):
                 warnings.warn(
                     message=SAME_BOX_SIZE_WARNING,
                     category=RuntimeWarning,
-                    stacklevel=2,
+                    stacklevel=3,
                 )
             else:
+                # Rebinding particle_images frees the uncentered stack
                 orig_template_size = self.dataset.particle_stack.original_template_size
                 _, particle_images = _center_images_by_correlations(
                     cross_correlation=default_cc,
                     particle_images=particle_images,
                     original_template_size=orig_template_size,
                 )
-
-        default_cc = cross_correlate_particle_stack(
-            particle_stack_images=particle_images,
-            projections=full_length_projections,
-            batch_size=batch_size,
-        )
+                default_cc = cross_correlate_particle_stack(
+                    particle_stack_images=particle_images,
+                    projections=full_length_projections,
+                    batch_size=batch_size,
+                )
 
         # Default template autocorrelation s_t = ||t||^2 (pose-dependent only)
         default_overlap = torch.sum(full_length_projections**2, dim=(-2, -1))
@@ -294,28 +284,9 @@ class MosaicsManager(BaseModel):
         ### 3. Iteration over alternate (truncated) models ###
         ######################################################
 
-        num_iters = self.template_iterator.num_alternate_structures
-
-        # NOTE: When the inverted flag is set to True, the iterator will return the
-        # indices of the atoms that should NOT be removed. This is opposite of the
-        # the 'sim_removed_atoms_only' flag.
-        invert_iterator = not self.sim_removed_atoms_only
-        alternate_template_iterator = self.template_iterator.alternate_template_iter(
-            invert_iterator
-        )
-
-        alternate_template_results = []
-        for chains, residues, atom_indices in tqdm.tqdm(
-            alternate_template_iterator,
-            total=num_iters,
-            desc="Iterating over alternate models",
-        ):
+        alternate_stats = []
+        for _, _, atom_indices in tqdm.tqdm(alternates, desc=desc):
             if len(atom_indices) == 0:
-                warnings.warn(
-                    "No atoms to remove for this iteration. Skipping calculation.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
                 # Nothing removed: t* = t and h = 0
                 stats = {
                     "cross_correlation": default_cc,
@@ -324,7 +295,6 @@ class MosaicsManager(BaseModel):
                     "removed_autocorrelation": torch.zeros_like(default_overlap),
                     "alternate_removed_overlap": torch.zeros_like(default_overlap),
                 }
-
             else:
                 stats = self._mosaics_inner_loop(
                     particle_images=particle_images,
@@ -335,26 +305,147 @@ class MosaicsManager(BaseModel):
                     atom_indices=atom_indices,
                     batch_size=batch_size,
                 )
+            alternate_stats.append({k: v.cpu().numpy() for k, v in stats.items()})
 
-            stats_np = {key: value.cpu().numpy() for key, value in stats.items()}
+        return (
+            default_cc.cpu().numpy(),
+            default_overlap.cpu().numpy(),
+            alternate_stats,
+        )
+
+    def run_mosaics(
+        self,
+        gpu_id: Union[Literal["cpu"], int],
+        batch_size: int = 2048,
+        cache_path: Union[None, str] = None,
+        particle_chunk_size: Union[None, int] = None,
+    ) -> MosaicsResult:
+        """Run the MOSAICS program.
+
+        Parameters
+        ----------
+        gpu_id : Union[Literal["cpu"], int]
+            The GPU ID to use for the computation. Can either be the string "cpu" to
+            use the CPU, or an integer specifying the GPU ID. All other values are
+            invalid.
+        batch_size : int, optional
+            The batch size -- number of particle images to process at once -- to use
+            for the cross-correlation calculations. The default is 2048.
+        cache_path : Union[None, str], optional
+            If a string is provided, then the path is assumed to contain a .npz file
+            which contains pre-computed dataset variables. Useful when many experiments
+            are being run in sequence. Default is None, which means no cache file is
+            used. The cache is loaded onto the CPU and each chunk of particles is moved
+            to the device as it is processed.
+        particle_chunk_size : Union[None, int], optional
+            Number of particles processed (pre-processed, projected and correlated
+            against all alternate templates) at a time. Particles are independent, so
+            the results do not depend on the chunk size, but memory use on the device
+            scales with it. Default is None, which processes all particles at once.
+        """
+        if gpu_id == "cpu":
+            device = torch.device("cpu")
+        elif isinstance(gpu_id, int) and gpu_id >= 0:
+            device = torch.device(f"cuda:{gpu_id}")
+        else:
+            raise ValueError(
+                f"Invalid gpu_id: {gpu_id}. Must be 'cpu' or a non-negative integer."
+            )
+
+        # The cache holds all particles; load it on the CPU and move chunks over
+        if cache_path is not None:
+            self.dataset.load_from_cache(cache_path, torch.device("cpu"))
+            num_particles = int(self.dataset.rotation_matrices.shape[0])
+        else:
+            num_particles = self.dataset.num_particles
+
+        if particle_chunk_size is None or particle_chunk_size <= 0:
+            particle_chunk_size = num_particles
+        particle_chunk_size = max(1, min(particle_chunk_size, num_particles))
+        chunks = [
+            slice(start, min(start + particle_chunk_size, num_particles))
+            for start in range(0, num_particles, particle_chunk_size)
+        ]
+
+        projector = TemplateProjector.from_simulator(self.simulator, device)
+
+        # NOTE: When the inverted flag is set to True, the iterator will return the
+        # indices of the atoms that should NOT be removed. This is opposite of the
+        # the 'sim_removed_atoms_only' flag. The alternates are materialized once so
+        # every chunk of particles uses the same (possibly random) alternates.
+        invert_iterator = not self.sim_removed_atoms_only
+        alternates = list(
+            self.template_iterator.alternate_template_iter(invert_iterator)
+        )
+        for _, _, atom_indices in alternates:
+            if len(atom_indices) == 0:
+                warnings.warn(
+                    "No atoms to remove for this iteration. Skipping calculation.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+        chunk_results = []
+        for rows in chunks:
+            if cache_path is not None:
+                inputs = {
+                    "rotation_matrices": self.dataset.rotation_matrices[rows],
+                    "projective_filters": self.dataset.projective_filters[rows],
+                    "particle_images": self.dataset.particle_images[rows],
+                }
+                inputs = {key: value.to(device) for key, value in inputs.items()}
+            else:
+                self.dataset.process_inputs(
+                    device,
+                    self.simulator,
+                    particle_rows=rows if len(chunks) > 1 else None,
+                )
+                inputs = {
+                    "rotation_matrices": self.dataset.rotation_matrices,
+                    "projective_filters": self.dataset.projective_filters,
+                    "particle_images": self.dataset.pop_particle_images(),
+                }
+
+            desc = "Iterating over alternate models"
+            if len(chunks) > 1:
+                desc += f" (particles {rows.start}-{rows.stop - 1} of {num_particles})"
+            chunk_results.append(
+                self._process_particle_chunk(
+                    inputs, projector, alternates, batch_size, desc
+                )
+            )
+            del inputs
+
+        default_cc = np.concatenate([res[0] for res in chunk_results])
+        default_overlap = np.concatenate([res[1] for res in chunk_results])
+
+        default_scattering_potential = (
+            self.template_iterator.get_template_scattering_potential(None)
+        )
+        alternate_template_results = []
+        for j, (chains, residues, atom_indices) in enumerate(alternates):
+            stats = {
+                key: np.concatenate([res[2][j][key] for res in chunk_results])
+                for key in chunk_results[0][2][j]
+            }
             alternate_scattering_potential = (
                 self.template_iterator.get_template_scattering_potential(atom_indices)
             )
-
-            this_result = AlternateTemplateResult(
-                chain_ids=chains,
-                residue_ids=residues,
-                removed_atom_indices=atom_indices.cpu().numpy(),
-                sim_removed_atoms_only=self.sim_removed_atoms_only,
-                scattering_potential_full_length=default_scattering_potential,
-                scattering_potential_alternate=alternate_scattering_potential,
-                **stats_np,
+            alternate_template_results.append(
+                AlternateTemplateResult(
+                    chain_ids=chains,
+                    residue_ids=residues,
+                    removed_atom_indices=np.asarray(atom_indices),
+                    sim_removed_atoms_only=self.sim_removed_atoms_only,
+                    scattering_potential_full_length=default_scattering_potential,
+                    scattering_potential_alternate=alternate_scattering_potential,
+                    **stats,
+                )
             )
-            alternate_template_results.append(this_result)
 
         return MosaicsResult(
-            default_cross_correlation=default_cc.cpu().numpy(),
-            default_overlap=default_overlap.cpu().numpy(),
+            default_cross_correlation=default_cc,
+            default_overlap=default_overlap,
             template_iterator_config=self.template_iterator.model_dump(),
             sim_removed_atoms_only=self.sim_removed_atoms_only,
             alternate_template_results=alternate_template_results,
