@@ -136,6 +136,20 @@ class MosaicsManager(BaseModel):
 
         return cls(**data)
 
+    def _removed_atom_indices(
+        self, atom_indices: torch.Tensor, num_atoms: int
+    ) -> torch.Tensor:
+        """Indices of the removed atoms given the template iterator's atom indices."""
+        atom_indices = torch.as_tensor(atom_indices).long()
+
+        if self.sim_removed_atoms_only:
+            return atom_indices
+
+        is_removed = torch.ones(num_atoms, dtype=torch.bool)
+        is_removed[atom_indices] = False
+
+        return torch.nonzero(is_removed).squeeze(-1)
+
     def _mosaics_inner_loop(
         self,
         particle_images: torch.Tensor,
@@ -174,19 +188,13 @@ class MosaicsManager(BaseModel):
             alternate cross-correlation c*, the overlap <t, t*>, and the Gram entries
             ||t*||^2, ||h||^2 and <t*, h> where h = t - t* is the removed structure.
         """
-        atom_indices = torch.as_tensor(atom_indices).long()
-        if self.sim_removed_atoms_only:
-            removed_atom_indices = atom_indices
-        else:
-            is_removed = torch.ones(projector.num_atoms, dtype=torch.bool)
-            is_removed[atom_indices] = False
-            removed_atom_indices = torch.nonzero(is_removed).squeeze(-1)
-
         return alternate_template_statistics(
             particle_stack_images=particle_images,
             default_projections=full_length_projections,
             projector=projector,
-            removed_atom_indices=removed_atom_indices,
+            removed_atom_indices=self._removed_atom_indices(
+                atom_indices, projector.num_atoms
+            ),
             rotation_matrices=rotation_matrices,
             projective_filters=projective_filters,
             batch_size=batch_size,
@@ -211,7 +219,9 @@ class MosaicsManager(BaseModel):
         projector : TemplateProjector
             The analytic projector holding all template atoms.
         alternates : list[tuple]
-            The (chains, residues, atom_indices) of each alternate template.
+            The (chains, residues, atom_indices) of each alternate template, with the
+            atom indices as returned by the template iterator (removed atoms when
+            'sim_removed_atoms_only' is True, otherwise kept atoms).
         batch_size : int
             Number of particles processed at once.
         desc : str
@@ -286,7 +296,8 @@ class MosaicsManager(BaseModel):
 
         alternate_stats = []
         for _, _, atom_indices in tqdm.tqdm(alternates, desc=desc):
-            if len(atom_indices) == 0:
+            removed = self._removed_atom_indices(atom_indices, projector.num_atoms)
+            if len(removed) == 0:
                 # Nothing removed: t* = t and h = 0
                 stats = {
                     "cross_correlation": default_cc,
@@ -342,6 +353,11 @@ class MosaicsManager(BaseModel):
             against all alternate templates) at a time. Particles are independent, so
             the results do not depend on the chunk size, but memory use on the device
             scales with it. Default is None, which processes all particles at once.
+
+        NOTE: Without a cache, the dataset is processed during the run and only holds
+        the rotation matrices and projective filters of the last chunk afterwards (the
+        particle images are released to save memory). To create a cache, call
+        `dataset.process_inputs` followed by `dataset.save_to_cache` beforehand.
         """
         if gpu_id == "cpu":
             device = torch.device("cpu")
@@ -377,10 +393,12 @@ class MosaicsManager(BaseModel):
         alternates = list(
             self.template_iterator.alternate_template_iter(invert_iterator)
         )
-        for _, _, atom_indices in alternates:
-            if len(atom_indices) == 0:
+        for j, (chains, _, atom_indices) in enumerate(alternates):
+            if len(self._removed_atom_indices(atom_indices, projector.num_atoms)) == 0:
+                chain_ids = sorted({str(chain) for chain in chains})
                 warnings.warn(
-                    "No atoms to remove for this iteration. Skipping calculation.",
+                    f"Alternate template {j} (chains {chain_ids}) removes no atoms; "
+                    "its statistics equal those of the default template.",
                     RuntimeWarning,
                     stacklevel=2,
                 )

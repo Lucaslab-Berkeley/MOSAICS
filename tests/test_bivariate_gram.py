@@ -1,6 +1,7 @@
 """Tests for the analytic template projections and the bivariate Gram entries."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import mmdf
 import numpy as np
@@ -238,6 +239,74 @@ def test_inner_loop_atom_index_convention(setup, removed_only):
         torch.testing.assert_close(out[key], value)
 
 
+@pytest.mark.parametrize("removed_only", [True, False])
+def test_alternates_removing_no_or_all_atoms(setup, removed_only):
+    """Alternates removing no atoms (t* = t) or all atoms (t* = 0), in both index
+    conventions of the template iterator."""
+    s = setup
+    num_atoms = s["projector"].num_atoms
+    nothing, everything = torch.arange(0), torch.arange(num_atoms)
+    # Iterator indices are the removed atoms, or the kept atoms if not removed_only
+    alternates = [
+        ([None], [None], nothing if removed_only else everything),
+        ([None], [None], everything if removed_only else nothing),
+    ]
+    manager = MosaicsManager.model_construct(
+        sim_removed_atoms_only=removed_only, particle_positions_are_centered=True
+    )
+    inputs = {
+        "rotation_matrices": s["rotmats"],
+        "projective_filters": s["filters"],
+        "particle_images": s["images"],
+    }
+    default_cc, s_t, (none_removed, all_removed) = manager._process_particle_chunk(
+        inputs, s["projector"], alternates, batch_size=3, desc="test"
+    )
+    zeros = np.zeros_like(s_t)
+
+    expected_none = {
+        "cross_correlation": default_cc,
+        "alternate_overlap": s_t,
+        "alternate_autocorrelation": s_t,
+        "removed_autocorrelation": zeros,
+        "alternate_removed_overlap": zeros,
+    }
+    expected_all = {
+        "cross_correlation": np.zeros_like(default_cc),
+        "alternate_overlap": zeros,
+        "alternate_autocorrelation": zeros,
+        "removed_autocorrelation": s_t,
+        "alternate_removed_overlap": zeros,
+    }
+    for stats, expected in ((none_removed, expected_none), (all_removed, expected_all)):
+        for key, value in expected.items():
+            scale = max(np.abs(default_cc).max(), s_t.max())
+            np.testing.assert_allclose(stats[key] / scale, value / scale, atol=1e-5)
+
+
+def test_save_to_cache_requires_all_particles(particle_cache, tmp_path):
+    """Caches can only be written from inputs processed for the whole stack."""
+    cache = np.load(particle_cache)
+    num = cache["particle_images"].shape[0]
+
+    dataset = MosaicsDataset.model_construct()
+    with pytest.raises(ValueError, match="No particle images"):
+        dataset.save_to_cache(str(tmp_path / "empty.npz"))
+
+    dataset = MosaicsDataset.model_construct(
+        particle_stack=SimpleNamespace(num_particles=num + 1)
+    )
+    dataset.load_from_cache(particle_cache, torch.device("cpu"))
+    with pytest.raises(ValueError, match="process_inputs"):
+        dataset.save_to_cache(str(tmp_path / "partial.npz"))
+
+    dataset.particle_stack = SimpleNamespace(num_particles=num)
+    dataset.save_to_cache(str(tmp_path / "full.npz"))
+    resaved = np.load(tmp_path / "full.npz")
+    for key in ("rotation_matrices", "projective_filters", "particle_images"):
+        np.testing.assert_array_equal(resaved[key], cache[key])
+
+
 def test_bivariate_model_monte_carlo(setup):
     """Proposition 1: (c, c*) mean a G' theta and covariance sigma^2 Gram(t, t*)."""
     s = setup
@@ -439,4 +508,6 @@ def test_run_mosaics_particle_chunks(particle_cache, iterator_config):
     assert full["c"].shape == (7,)
     assert full["c_star"].shape[1] == len(results[0].alternate_template_results) > 1
     for key, value in full.items():
-        np.testing.assert_allclose(chunked[key], value, rtol=1e-5, atol=1e-6)
+        # float32 sums over 64^2 pixels; tolerance relative to each array's scale
+        atol = 1e-5 * np.abs(value).max()
+        np.testing.assert_allclose(chunked[key], value, rtol=1e-5, atol=atol)

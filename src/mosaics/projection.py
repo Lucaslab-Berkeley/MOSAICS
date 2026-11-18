@@ -311,7 +311,7 @@ class TemplateProjector:
         )
 
     def truncated_fraction(self) -> float:
-        """Fraction of the template's projected potential outside the atom stencils.å"""
+        """Fraction of the template's projected potential outside the atom stencils."""
         sigma = torch.sqrt((self.params_b + self.b_factors[:, None]) / (8 * math.pi**2))
         inside = torch.erf(self.stencil_radius / (math.sqrt(2) * sigma)) ** 2
         lost = ((1 - inside) * self.params_a).sum() / self.params_a.sum()

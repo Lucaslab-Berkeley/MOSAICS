@@ -194,10 +194,30 @@ class MosaicsDataset(BaseModel):
         Returns
         -------
         None
+
+        Raises
+        ------
+        ValueError
+            If the dataset does not hold processed inputs for all particles, e.g. after
+            `MosaicsManager.run_mosaics` released the particle images or processed the
+            particles in chunks.
         """
-        rotation_matrices = self._rotation_matrices.cpu().numpy()
-        projective_filters = self._projective_filters.cpu().numpy()
-        particle_images = self._particle_images.cpu().numpy()
+        if self._particle_images is None:
+            raise ValueError(
+                "No particle images to cache. They are released by "
+                "MosaicsManager.run_mosaics, so call process_inputs() (without "
+                "particle_rows) and save_to_cache() before running MOSAICS."
+            )
+        rotation_matrices = self.rotation_matrices.cpu().numpy()
+        projective_filters = self.projective_filters.cpu().numpy()
+        particle_images = self.particle_images.cpu().numpy()
+        num_cached = particle_images.shape[0]
+        if num_cached != self.num_particles:
+            raise ValueError(
+                f"The dataset holds {num_cached} processed particles but the particle "
+                f"stack has {self.num_particles}. Call process_inputs() without "
+                "particle_rows before saving a cache."
+            )
 
         np.savez(
             cache_path,

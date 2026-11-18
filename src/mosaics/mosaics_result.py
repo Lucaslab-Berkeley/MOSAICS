@@ -40,14 +40,16 @@ class AlternateTemplateResult(BaseModel):
     residue_ids : list[Optional[int]]
         The residue IDs for each residue in the model. This list is index aligned with
         'chain_ids'.
-    removed_atom_indices : list[int]
-        The atom indices that were removed from the full model to create the alternate
-        (truncated) model.
+    removed_atom_indices : np.ndarray
+        The atom indices returned by the template iterator for this alternate model.
+        If 'sim_removed_atoms_only' is True, these are the atoms removed from the
+        full model to create the alternate (truncated) model. Otherwise they are the
+        atoms kept in the alternate model, and the removed atoms are the complement.
     sim_removed_atoms_only : bool
-        Whether only the removed residues were used for the cross-correlation
-        calculation. Default is False which means the entire model (minus the removed
-        atoms from the corresponding residues) were used in the calculation. If True,
-        only the removed atoms were used in the calculation.
+        How to interpret 'removed_atom_indices' (and 'scattering_potential_alternate'):
+        True if they refer to the removed atoms, False if they refer to the kept
+        atoms. The computed statistics do not depend on this flag; only the removed
+        atoms are ever projected, and t* = t - h follows from linearity.
     alternate_overlap : np.ndarray
         The overlap <t, t*> between the alternate model projections t* and the default
         model projections t, per particle.
@@ -115,8 +117,8 @@ class MosaicsResult(BaseModel):
     template_iterator_config : dict[str, Any]
         The configuration of the template iterator used for the alternate models.
     sim_removed_atoms_only : bool
-        Whether only the removed residues were used for the cross-correlation
-        calculation.
+        Whether the atom indices of each alternate template result refer to the
+        removed atoms (True) or the kept atoms (False). See `AlternateTemplateResult`.
     alternate_template_results : list[AlternateTemplateResult]
         The results for each of the alternate template runs.
     """
