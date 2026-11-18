@@ -49,9 +49,18 @@ class AlternateTemplateResult(BaseModel):
         atoms from the corresponding residues) were used in the calculation. If True,
         only the removed atoms were used in the calculation.
     alternate_overlap : np.ndarray
-        The overlap between the alternate model projections and the default model
-        projections. Used for normalization of cross-correlation values for orientation
-        and feature sizes.
+        The overlap <t, t*> between the alternate model projections t* and the default
+        model projections t, per particle.
+    alternate_autocorrelation : np.ndarray | None
+        The alternate template autocorrelation s_{t*} = ||t*||^2, per particle.
+    removed_autocorrelation : np.ndarray | None
+        The removed structure autocorrelation s_h = ||h||^2, per particle, where
+        h = t - t* is the filtered projection of the removed atoms.
+    alternate_removed_overlap : np.ndarray | None
+        The overlap s_{t*h} = <t*, h> between the alternate template and the removed
+        structure, per particle. Together with the two autocorrelations, this fully
+        describes the template Gram matrix of the bivariate model of (c, c*).
+        The three Gram fields are None for results computed before they were tracked.
     scattering_potential_full_length : float
         The total scattering potential of the full-length model.
     scattering_potential_alternate : float
@@ -77,6 +86,9 @@ class AlternateTemplateResult(BaseModel):
     alternate_overlap: NDArray
     scattering_potential_full_length: float
     scattering_potential_alternate: float
+    alternate_autocorrelation: Optional[NDArray] = None
+    removed_autocorrelation: Optional[NDArray] = None
+    alternate_removed_overlap: Optional[NDArray] = None
 
     def expected_correlation_decrease(self) -> float:
         """Relative decrease in cross-corr due to change in scattering potential."""
@@ -98,9 +110,8 @@ class MosaicsResult(BaseModel):
     default_cross_correlation : np.ndarray
         The default (non-truncated model) cross-correlation values.
     default_overlap : np.ndarray
-        The overlap between the default model projections and the perfect projections.
-        Used for normalization of cross-correlation values for orientation and feature
-        sizes.
+        The default template autocorrelation s_t = ||t||^2 for each particle, where t
+        is the filtered default template projection at the particle's pose.
     template_iterator_config : dict[str, Any]
         The configuration of the template iterator used for the alternate models.
     sim_removed_atoms_only : bool
@@ -134,8 +145,7 @@ class MosaicsResult(BaseModel):
         The returned DataFrame will have following columns:
         - particle_id: The particle ID, defaults to ['part_0', 'part_1', ...]
         - default_cc: The default cross-correlation value
-        - default_overlap: The overlap between the default model projections and the
-          perfect projections
+        - default_overlap: The default template autocorrelation s_t = ||t||^2
         - alt_cc_0: The cross-correlation value for the first alternate model
         - alt_cc_1: The cross-correlation value for the second alternate model
         ...
@@ -189,9 +199,9 @@ class MosaicsResult(BaseModel):
             the default and alternate cross-correlation values as numpy arrays.
             - The first array is the default cross-correlation values
             - The second array is the alternate cross-correlation values per particle
-            - The third array is the default overlaps between perfect projections
-            - The fourth array is the alternate overlaps between perfect projections
-              and each of the alternate models.
+            - The third array is the default template autocorrelation s_t = ||t||^2
+            - The fourth array is the overlap <t, t*> between the default template
+              and each of the alternate templates.
         """
         default_cc = np.array(self.default_cross_correlation)
         default_overlap = np.array(self.default_overlap)
@@ -208,6 +218,55 @@ class MosaicsResult(BaseModel):
             ]
         ).T
         return default_cc, alt_cc, default_overlap, alt_overlap
+
+    def bivariate_arrays(self) -> dict[str, np.ndarray]:
+        """Per-particle correlations and template Gram entries for the bivariate model.
+
+        Notation follows the bivariate derivation: t is the default template, t* the
+        alternate template and h = t - t* the removed structure, all filtered
+        projections at each particle's pose.
+
+        Returns
+        -------
+        dict[str, np.ndarray]
+            - ``c``: default correlations <I, t>, shape (N,)
+            - ``s_t``: ||t||^2, shape (N,)
+            - ``c_star``: alternate correlations <I, t*>, shape (N, J)
+            - ``y``: observed change c - c* = <I, h>, shape (N, J)
+            - ``t_dot_ts``: <t, t*>, shape (N, J)
+            - ``s_ts``: ||t*||^2, shape (N, J)
+            - ``s_h``: ||h||^2, shape (N, J)
+            - ``s_tsh``: <t*, h>, shape (N, J)
+
+            where N is the number of particles and J the number of alternate models.
+
+        Raises
+        ------
+        ValueError
+            If the result predates tracking of the Gram entries.
+        """
+        alts = self.alternate_template_results
+        if any(alt.removed_autocorrelation is None for alt in alts):
+            raise ValueError(
+                "This result does not contain the template Gram entries. Re-run "
+                "MOSAICS with a version that tracks them."
+            )
+
+        def stack(name: str) -> np.ndarray:
+            return np.stack([np.asarray(getattr(alt, name)) for alt in alts], axis=1)
+
+        c = np.asarray(self.default_cross_correlation)
+        c_star = stack("cross_correlation")
+        return {
+            "c": c,
+            "s_t": np.asarray(self.default_overlap),
+            "c_star": c_star,
+            "y": c[:, None] - c_star,
+            "t_dot_ts": stack("alternate_overlap"),
+            "s_ts": stack("alternate_autocorrelation"),
+            "s_h": stack("removed_autocorrelation"),
+            "s_tsh": stack("alternate_removed_overlap"),
+        }
 
     def mosaics_scores(self) -> np.ndarray:
         """Calculates the MOSAICS scores for each particle and alternate model.

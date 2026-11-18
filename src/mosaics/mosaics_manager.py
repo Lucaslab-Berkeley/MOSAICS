@@ -7,11 +7,15 @@ import mmdf
 import torch
 import tqdm
 import yaml  # type: ignore
+from leopard_em.utils.fourier_slice import volume_to_rfft_fourier_slice
 from pydantic import BaseModel
-from torch_fourier_slice import project_3d_to_2d
 from ttsim3d.models import Simulator
 
-from .cross_correlation_core import cross_correlate_particle_stack
+from .cross_correlation_core import (
+    alternate_template_statistics,
+    cross_correlate_particle_stack,
+    project_filtered_templates,
+)
 from .mosaics_dataset import MosaicsDataset
 from .mosaics_result import AlternateTemplateResult, MosaicsResult
 from .template_iterator import BaseTemplateIterator, instantiate_template_iterator
@@ -62,39 +66,6 @@ def _center_images_by_correlations(
     max_cc_values *= factor
 
     return max_cc_values, centered_images
-
-
-def _get_full_length_projections(
-    default_volume: torch.Tensor,
-    rotation_matrices: torch.Tensor,
-    projective_filters: torch.Tensor,
-    batch_size: int = 2048,
-) -> torch.Tensor:
-    """Calculate the full-length projections for the default template."""
-    full_length_projections = torch.zeros(
-        (
-            rotation_matrices.shape[0],
-            default_volume.shape[-2],
-            default_volume.shape[-1],
-        ),
-        device=default_volume.device,
-    )
-
-    for i in range(0, rotation_matrices.shape[0], batch_size):
-        batch_rotation_matrices = rotation_matrices[i : i + batch_size]
-        batch_projective_filters = projective_filters[i : i + batch_size]
-
-        batch_projections = project_3d_to_2d(
-            volume=default_volume, rotation_matrices=batch_rotation_matrices
-        )
-        batch_projections_dft = torch.fft.rfftn(batch_projections, dim=(-2, -1))
-        batch_projections_dft *= batch_projective_filters
-        batch_projections_dft *= -1
-        batch_projections = torch.fft.irfftn(batch_projections_dft, dim=(-2, -1))
-
-        full_length_projections[i : i + batch_size] = batch_projections
-
-    return full_length_projections
 
 
 class MosaicsManager(BaseModel):
@@ -170,7 +141,7 @@ class MosaicsManager(BaseModel):
         atom_indices: torch.Tensor,
         device: torch.device,
         batch_size: int = 2048,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         """Inner loop function for running the MOSAICS program.
 
         Parameters
@@ -178,7 +149,7 @@ class MosaicsManager(BaseModel):
         particle_images : torch.Tensor
             Pre-processed and normalized particle images *in real space*.
         full_length_projections : torch.Tensor
-            The full-length projection images for comparison.
+            The filtered default template projections from `project_filtered_templates`.
         rotation_matrices : torch.Tensor
             The rotation matrices for the orientations of each particle.
         projective_filters : torch.Tensor
@@ -186,7 +157,8 @@ class MosaicsManager(BaseModel):
         default_volume : torch.Tensor
             The default (full-length) simulated structure volume to compare against.
         atom_indices : torch.Tensor
-            Which atoms should be removed from the template for the alternate model.
+            Atom indices passed to the simulator. These are the removed atoms when
+            'sim_removed_atoms_only' is True, otherwise the kept atoms.
         device : torch.device
             The device to use for the computation. Should be either a CPU or GPU device.
         batch_size : int, optional
@@ -195,39 +167,35 @@ class MosaicsManager(BaseModel):
 
         Returns
         -------
-        tuple[torch.Tensor, torch.Tensor]
-            - First element is cross-correlation values of the alternate model with
-            particle images.
-            - Second element is the correlation between the default model
-            projections and alternate model projections (expected decrease).
+        dict[str, torch.Tensor]
+            Per-particle statistics from `alternate_template_statistics`: the
+            alternate cross-correlation c*, the overlap <t, t*>, and the Gram entries
+            ||t*||^2, ||h||^2 and <t*, h> where h = t - t* is the removed structure.
         """
-        alternate_volume = self.simulator.run(
+        simulated_volume = self.simulator.run(
             device=str(device), atom_indices=atom_indices
         )
 
-        # Subtract the alternate_volume from the default_volume if
-        # self.sim_removed_atoms_only is set.
-        # This is because, when inverted, only the atoms which should be
-        # removed get simulated rather than the atoms which should be kept.
+        # When self.sim_removed_atoms_only is set, only the removed atoms are
+        # simulated; otherwise only the kept atoms are simulated.
         if self.sim_removed_atoms_only:
-            alternate_volume = default_volume - alternate_volume
+            removed_volume = simulated_volume
+            alternate_volume = default_volume - simulated_volume
+        else:
+            removed_volume = default_volume - simulated_volume
+            alternate_volume = simulated_volume
 
-        alternate_volume = torch.fft.fftshift(alternate_volume)
-        alternate_volume_dft = torch.fft.rfftn(alternate_volume, dim=(-3, -2, -1))
-        alternate_volume_dft = torch.fft.fftshift(alternate_volume_dft, dim=(-3, -2))
-
-        # Recalculate the cross-correlation with the alternate model
-        # and take the maximum value over space
-        alternate_cc, overlap_cc = cross_correlate_particle_stack(
+        # Use the same volume -> DFT transform (incl. the sinc^2 interpolation
+        # correction) as the default template, so that t = t* + h holds exactly.
+        return alternate_template_statistics(
             particle_stack_images=particle_images,
-            perfect_projection_images=full_length_projections,
-            template_dft=alternate_volume_dft,
+            default_projections=full_length_projections,
+            alternate_template_dft=volume_to_rfft_fourier_slice(alternate_volume),
+            removed_template_dft=volume_to_rfft_fourier_slice(removed_volume),
             rotation_matrices=rotation_matrices,
             projective_filters=projective_filters,
             batch_size=batch_size,
         )
-
-        return alternate_cc, overlap_cc
 
     def run_mosaics(
         self,
@@ -278,8 +246,10 @@ class MosaicsManager(BaseModel):
         ### 1. Calculate default (full length) cross corr and projections ###
         #####################################################################
 
-        full_length_projections = _get_full_length_projections(
-            default_volume=default_template,
+        # Filtered default template projections t, identical to the templates
+        # correlated against the particle images (needed for the Gram entries).
+        full_length_projections = project_filtered_templates(
+            template_dft=default_template_dft,
             rotation_matrices=rotation_matrices,
             projective_filters=projective_filters,
             batch_size=batch_size,
@@ -322,14 +292,17 @@ class MosaicsManager(BaseModel):
                     original_template_size=orig_template_size,
                 )
 
-        default_cc, default_overlap = cross_correlate_particle_stack(
+        default_cc, _ = cross_correlate_particle_stack(
             particle_stack_images=particle_images,
-            perfect_projection_images=full_length_projections,
+            perfect_projection_images=None,
             template_dft=default_template_dft,
             rotation_matrices=rotation_matrices,
             projective_filters=projective_filters,
             batch_size=batch_size,
         )
+
+        # Default template autocorrelation s_t = ||t||^2 (pose-dependent only)
+        default_overlap = torch.sum(full_length_projections**2, dim=(-2, -1))
 
         ######################################################
         ### 3. Iteration over alternate (truncated) models ###
@@ -357,12 +330,17 @@ class MosaicsManager(BaseModel):
                     RuntimeWarning,
                     stacklevel=2,
                 )
-                alternate_cc = default_cc
-                alternate_overlap = torch.ones_like(default_cc)
-                alternate_scattering_potential = default_scattering_potential
+                # Nothing removed: t* = t and h = 0
+                stats = {
+                    "cross_correlation": default_cc,
+                    "alternate_overlap": default_overlap,
+                    "alternate_autocorrelation": default_overlap,
+                    "removed_autocorrelation": torch.zeros_like(default_overlap),
+                    "alternate_removed_overlap": torch.zeros_like(default_overlap),
+                }
 
             else:
-                alternate_cc, alternate_overlap = self._mosaics_inner_loop(
+                stats = self._mosaics_inner_loop(
                     particle_images=particle_images,
                     full_length_projections=full_length_projections,
                     rotation_matrices=rotation_matrices,
@@ -370,23 +348,22 @@ class MosaicsManager(BaseModel):
                     default_volume=default_template,
                     atom_indices=atom_indices,
                     device=device,
+                    batch_size=batch_size,
                 )
 
-            alternate_cc = alternate_cc.cpu().numpy()
-            alternate_overlap = alternate_overlap.cpu().numpy()
+            stats_np = {key: value.cpu().numpy() for key, value in stats.items()}
             alternate_scattering_potential = (
                 self.template_iterator.get_template_scattering_potential(atom_indices)
             )
 
             this_result = AlternateTemplateResult(
-                cross_correlation=alternate_cc,
                 chain_ids=chains,
                 residue_ids=residues,
                 removed_atom_indices=atom_indices.cpu().numpy(),
                 sim_removed_atoms_only=self.sim_removed_atoms_only,
-                alternate_overlap=alternate_overlap,
                 scattering_potential_full_length=default_scattering_potential,
                 scattering_potential_alternate=alternate_scattering_potential,
+                **stats_np,
             )
             alternate_template_results.append(this_result)
 

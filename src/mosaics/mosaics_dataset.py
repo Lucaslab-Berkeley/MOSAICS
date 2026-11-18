@@ -140,7 +140,9 @@ class MosaicsDataset(BaseModel):
             **ctf_kwargs,
         )
 
-        ctf_filters.squeeze_(0)  # remove defocus offset dim
+        # NOTE: Leopard-EM returns the projective filters on the template's device,
+        # while the CTF filters are computed on the CPU.
+        ctf_filters = ctf_filters.squeeze(0).to(projective_filters.device)
         projective_filters = projective_filters * ctf_filters
 
         # Grab the per-particle orientations preferring refined angles (if they exist)
