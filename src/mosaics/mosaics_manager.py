@@ -7,7 +7,6 @@ import mmdf
 import torch
 import tqdm
 import yaml  # type: ignore
-from leopard_em.utils.fourier_slice import volume_to_rfft_fourier_slice
 from pydantic import BaseModel
 from ttsim3d.models import Simulator
 
@@ -18,6 +17,7 @@ from .cross_correlation_core import (
 )
 from .mosaics_dataset import MosaicsDataset
 from .mosaics_result import AlternateTemplateResult, MosaicsResult
+from .projection import TemplateProjector
 from .template_iterator import BaseTemplateIterator, instantiate_template_iterator
 
 SAME_BOX_SIZE_WARNING = (
@@ -75,17 +75,20 @@ class MosaicsManager(BaseModel):
     ----------
     simulator : Simulator
         Instance of Simulator model from ttsim3d package. Holds the pdb file and
-        associated atom positions, bfactors, etc. for simulating a 3D volume.
+        associated atom positions, bfactors, etc. along with the simulation settings
+        (dose weighting, MTF, upsampling). Template projections are computed
+        analytically from these atoms (see `mosaics.projection.TemplateProjector`);
+        no 3D volume is simulated.
     template_iterator : BaseTemplateIterator
         Iteration configuration model for describing how to iterate over the reference
         structure. Should be an instance of a subclass of BaseTemplateIterator.
     dataset : MosaicsDataset
         Dataset object that handles processing, loading, and caching of input data.
     sim_removed_atoms_only : bool
-        When True, only re-simulate the removed atoms from the alternate template and
-        subtract the alternate volume from the default volume. When False, simulate the
-        entire alternate template and subtract the alternate volume from the default.
-        Simulating only the removed atoms is generally faster. Default is True.
+        Whether the template iterator returns the removed atoms (True) or the kept
+        atoms (False) of each alternate template. This only affects how the atom
+        indices are interpreted and stored: the projections are linear in the atoms,
+        so only the removed atoms are ever projected. Default is True.
     particle_positions_are_centered : bool
         If True, then assume that the extracted boxes of particle images coming from
         'dataset.particle_images' will produce correlogram peak at central pixel.
@@ -135,11 +138,10 @@ class MosaicsManager(BaseModel):
         self,
         particle_images: torch.Tensor,
         full_length_projections: torch.Tensor,
+        projector: TemplateProjector,
         rotation_matrices: torch.Tensor,
         projective_filters: torch.Tensor,
-        default_volume: torch.Tensor,
         atom_indices: torch.Tensor,
-        device: torch.device,
         batch_size: int = 2048,
     ) -> dict[str, torch.Tensor]:
         """Inner loop function for running the MOSAICS program.
@@ -150,17 +152,15 @@ class MosaicsManager(BaseModel):
             Pre-processed and normalized particle images *in real space*.
         full_length_projections : torch.Tensor
             The filtered default template projections from `project_filtered_templates`.
+        projector : TemplateProjector
+            The analytic projector holding all template atoms.
         rotation_matrices : torch.Tensor
             The rotation matrices for the orientations of each particle.
         projective_filters : torch.Tensor
             The projection filters for each particle image.
-        default_volume : torch.Tensor
-            The default (full-length) simulated structure volume to compare against.
         atom_indices : torch.Tensor
-            Atom indices passed to the simulator. These are the removed atoms when
+            Atom indices from the template iterator. These are the removed atoms when
             'sim_removed_atoms_only' is True, otherwise the kept atoms.
-        device : torch.device
-            The device to use for the computation. Should be either a CPU or GPU device.
         batch_size : int, optional
             The batch size to use for the cross-correlation calculations. Default is
             2048.
@@ -172,26 +172,19 @@ class MosaicsManager(BaseModel):
             alternate cross-correlation c*, the overlap <t, t*>, and the Gram entries
             ||t*||^2, ||h||^2 and <t*, h> where h = t - t* is the removed structure.
         """
-        simulated_volume = self.simulator.run(
-            device=str(device), atom_indices=atom_indices
-        )
-
-        # When self.sim_removed_atoms_only is set, only the removed atoms are
-        # simulated; otherwise only the kept atoms are simulated.
+        atom_indices = torch.as_tensor(atom_indices).long()
         if self.sim_removed_atoms_only:
-            removed_volume = simulated_volume
-            alternate_volume = default_volume - simulated_volume
+            removed_atom_indices = atom_indices
         else:
-            removed_volume = default_volume - simulated_volume
-            alternate_volume = simulated_volume
+            is_removed = torch.ones(projector.num_atoms, dtype=torch.bool)
+            is_removed[atom_indices] = False
+            removed_atom_indices = torch.nonzero(is_removed).squeeze(-1)
 
-        # Use the same volume -> DFT transform (incl. the sinc^2 interpolation
-        # correction) as the default template, so that t = t* + h holds exactly.
         return alternate_template_statistics(
             particle_stack_images=particle_images,
             default_projections=full_length_projections,
-            alternate_template_dft=volume_to_rfft_fourier_slice(alternate_volume),
-            removed_template_dft=volume_to_rfft_fourier_slice(removed_volume),
+            projector=projector,
+            removed_atom_indices=removed_atom_indices,
             rotation_matrices=rotation_matrices,
             projective_filters=projective_filters,
             batch_size=batch_size,
@@ -239,28 +232,24 @@ class MosaicsManager(BaseModel):
         rotation_matrices = self.dataset.rotation_matrices
         projective_filters = self.dataset.projective_filters
         particle_images = self.dataset.particle_images
-        default_template = self.dataset.template_volume
-        default_template_dft = self.dataset.template_volume_dft
+        projector = TemplateProjector.from_simulator(self.simulator, device)
 
         #####################################################################
         ### 1. Calculate default (full length) cross corr and projections ###
         #####################################################################
 
-        # Filtered default template projections t, identical to the templates
-        # correlated against the particle images (needed for the Gram entries).
+        # Filtered default template projections t, computed analytically from all
+        # atoms. These are the templates correlated against the particle images.
         full_length_projections = project_filtered_templates(
-            template_dft=default_template_dft,
+            projector=projector,
             rotation_matrices=rotation_matrices,
             projective_filters=projective_filters,
             batch_size=batch_size,
         )
 
-        default_cc, _ = cross_correlate_particle_stack(
+        default_cc = cross_correlate_particle_stack(
             particle_stack_images=particle_images,
-            perfect_projection_images=None,  # Don't need auto-correlation
-            template_dft=default_template_dft,
-            rotation_matrices=rotation_matrices,
-            projective_filters=projective_filters,
+            projections=full_length_projections,
             batch_size=batch_size,
         )
 
@@ -292,12 +281,9 @@ class MosaicsManager(BaseModel):
                     original_template_size=orig_template_size,
                 )
 
-        default_cc, _ = cross_correlate_particle_stack(
+        default_cc = cross_correlate_particle_stack(
             particle_stack_images=particle_images,
-            perfect_projection_images=None,
-            template_dft=default_template_dft,
-            rotation_matrices=rotation_matrices,
-            projective_filters=projective_filters,
+            projections=full_length_projections,
             batch_size=batch_size,
         )
 
@@ -343,11 +329,10 @@ class MosaicsManager(BaseModel):
                 stats = self._mosaics_inner_loop(
                     particle_images=particle_images,
                     full_length_projections=full_length_projections,
+                    projector=projector,
                     rotation_matrices=rotation_matrices,
                     projective_filters=projective_filters,
-                    default_volume=default_template,
                     atom_indices=atom_indices,
-                    device=device,
                     batch_size=batch_size,
                 )
 

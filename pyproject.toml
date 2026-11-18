@@ -46,7 +46,9 @@ dependencies = [
     "ttsim3d",
     "teamtomo-basemodel",
     "Leopard-EM>=v1.3.1",
-    "torch-fourier-slice>=v0.6.0",
+    "torch-calculate-electrostatic-potential>=v0.6.0",
+    "torch-fourier-filter>=v0.6.0",
+    "torch-ctf>=v0.6.0",
 ]
 
 [tool.hatch.metadata]
@@ -56,7 +58,8 @@ allow-direct-references = true
 # "extras" (e.g. for `pip install .[test]`)
 [project.optional-dependencies]
 # Dependencies for running tests
-test = ["pytest", "pytest-cov"]
+# torch-fourier-slice is only used to cross-check the analytic projections
+test = ["pytest", "pytest-cov", "torch-fourier-slice>=v0.6.0"]
 # Development dependencies
 dev = [
     "ipython",
