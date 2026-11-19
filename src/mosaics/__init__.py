@@ -2,6 +2,7 @@
 
 from .mosaics_manager import MosaicsManager
 from .mosaics_result import MosaicsResult
+from .projection import MosaicsSimulator, TemplateProjector
 from .template_iterator import (
     ChainTemplateIterator,
     RandomAtomTemplateIterator,
@@ -14,4 +15,6 @@ __all__ = [
     "ResidueTemplateIterator",
     "MosaicsManager",
     "MosaicsResult",
+    "MosaicsSimulator",
+    "TemplateProjector",
 ]
